@@ -1,0 +1,4 @@
+pywin32
+numpy
+rapidocr-openvino
+pydantic
