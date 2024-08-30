@@ -2,3 +2,4 @@ pywin32
 numpy
 rapidocr-openvino
 pydantic
+opencv-python

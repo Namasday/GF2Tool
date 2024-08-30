@@ -1,12 +1,13 @@
+import json
+
+
 class Setting:
     """
     各种预设属性
     """
-    screenWidth = 3840
-    screenHeight = 2160
-
-    # 屏幕缩放系数
-    scaleFactor = 1
+    screenWidth = 3840  # 屏幕分辨率
+    screenHeight = 2160  # 屏幕分辨率
+    scaleFactor = 1  # 屏幕缩放系数
 
     # 键为页面名，值为页面特征文字
     textdictReco = {
@@ -24,17 +25,82 @@ class Setting:
         "设置": "设置",
         "登录": "点击开始",
         "演习": "布设防御",
-        "限时开启": "定期参与活动可获得丰厚报酬"
+        "限时开启": "定期参与活动可获得丰厚报酬",
+        "剧情战役": "猎人评定",
+        "模拟作战": "心智勘测",
+        "收获": "点击空白处关闭",
+        "加载": "资源加载中",
+        "作战准备": "作战开始",
+        "伤害统计": "伤害统计",
+        "任务完成": "任务完成",
+        "战斗中": "回合",
+        "实兵演习": "布设防御",
+        "晋升": "您已晋升至"
     }
 
-    # 储存ocr结果，0为位置，1为文本，2为置信度
-    listResults = []
+    # 路线
+    dictLocate = {
+        "班组要务": {
+            "listPage": ["主界面", "班组", "班组要务"],
+            "dictRoute": {
+                "主界面": "班组",
+                "班组": "要务"
+            }
+        },
+        "班组补给": {
+            "listPage": ["主界面", "班组", "班组补给"],
+            "dictRoute": {
+                "主界面": "班组",
+                "班组": "补给"
+            }
+        },
+        "实兵演习": {
+            "listPage": ["主界面", "剧情战役", "模拟作战", "实兵演习"],
+            "dictRoute": {
+                "主界面": "战役推进",
+                "剧情战役": "模拟作战",
+                "模拟作战": "实兵演习"
+            }
+        },
+        "调度室": {
+            "listPage": ["主界面", "公共区", "调度室"],
+            "dictRoute": {
+                "主界面": "公共区",
+                "公共区": "调度室"
+            }
+        },
+        "情报储备": {
+            "listPage": ["主界面", "公共区", "调度室", "情报储备"],
+            "dictRoute": {
+                "主界面": "公共区",
+                "公共区": "调度室",
+                "调度室": "调度收益"
+            }
+        },
+        "资源生产": {
+            "listPage": ["主界面", "公共区", "调度室", "情报储备", "资源生产"],
+            "dictRoute": {
+                "主界面": "公共区",
+                "公共区": "调度室",
+                "调度室": "调度收益",
+                "情报储备": "资源生产"
+            }
+        }
+    }
 
-    # 初始化窗口
     hwnd = None  # 窗口句柄
     windowPosition = None  # 窗口位置
     windowBar = None  # 窗口是否有标题栏
     titleBarHeight = 58  # 标题栏高度
+    threshold = 0.8  # 识别置信度阈值
+    fightingCapacity = 5000  # 战力阈值
+    dictTemplate = {
+        "自动战斗": "template/autobattle.png",
+        "自动战斗中": "template/autobattlein.png"
+    }  # 模板图片指针
 
-    # 识别置信度阈值
-    threshold = 0.8
+    # 读取预设文件
+    with open("config.json", "r") as f:
+        data = json.load(f)
+
+    timeslimitBattle = data['timeslimitBattle']

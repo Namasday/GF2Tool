@@ -1,6 +1,8 @@
+import time
 from ctypes import windll
 import cv2
 import numpy as np
+import win32api
 import win32con
 import win32gui
 import win32ui
@@ -9,44 +11,98 @@ from constants import Setting
 
 from rapidocr_openvino import RapidOCR
 
-from control import control
-
-ocr = RapidOCR()
+ocr = RapidOCR(det_limit_side_len=40)
 
 
-def locate(
-    route: list,
-    dictRoute: dict,
+class ImageModel():
+    def __init__(self, image: np.ndarray = None, position: tuple = (0, 0)):
+        self.image = image
+        self.position = position
+
+
+def crop_image(
+    image: np.ndarray,
+    area: tuple = None,
+    ratio: tuple = None
 ):
     """
-    导航至目标界面
-    :param route: 路线界面列表
-    :param dictRoute: 路线字典
+    对图片裁剪，返回图片模型
+    :param image: 原图像
+    :param area: 像素坐标裁剪，元组格式(x1, y1, x2, y2)
+    :param ratio: 比例坐标裁剪，元组格式(x1, y1, x2, y2)
+    :return: 裁剪后的图像ImageModel
     """
+    # 初始化box
+    x1, y1, x2, y2 = (0, 0, 0, 0)
+
+    if area:  # 如果是像素坐标裁剪
+        rate = Setting.screenWidth / 3840
+        x1 = int(area[0] * rate)
+        y1 = int(area[1] * rate)
+        x2 = int(area[2] * rate)
+        y2 = int(area[3] * rate)
+
+    elif ratio:  # 如果是比例裁剪
+        x1 = int(Setting.screenWidth * ratio[0])
+        y1 = int(Setting.screenWidth * ratio[1])
+        x2 = int(Setting.screenWidth * ratio[2])
+        y2 = int(Setting.screenWidth * ratio[3])
+
+    img = image[y1:y2, x1:x2]
+    return ImageModel(image=img, position=(x1, y1))
+
+
+def confirm_click(timeout=30):
+    """
+    装饰器：循环运行函数直到它返回True或达到最大重试次数。
+    :param timeout: 最大重试时间，默认为60秒。
+    """
+
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            while time.time() - now < timeout:
+                result = func(*args, **kwargs)
+                if result:
+                    return result
+            # 所有重试都失败了
+            return logger("操作超时")
+
+        return wrapper
+
+    return decorator
+
+
+def locate(text: str):
+    """
+    导航至目标界面
+    :param text: 目标界面名
+    """
+    listPage = Setting.dictLocate[text]['listPage']
+    dictRoute = Setting.dictLocate[text]['dictRoute']
     pageNow = reco_page()
-    if pageNow in route:
-        if pageNow == route[-1]:
+    if pageNow in listPage:
+        if pageNow == listPage[-1]:
             return
 
-        index = route.index(pageNow)
-        route = route[index:]
+        index = listPage.index(pageNow)
+        listPage = listPage[index:]
     else:
         done = control.click_home()
         if not done:
             logger("未知界面，无法返回主界面")
             return
 
-    for page in route[:-1]:
-        while True:
-            done = control.click_text(dictRoute[page])
-            if done:
-                break
+    for page in listPage[:-1]:
+        # 步进界面
+        control.click_text(dictRoute[page])
 
 
 def logger(text):
     print(text)
 
 
+# @confirm_recopage()
 def reco_page():
     """
     识别当前界面
@@ -55,7 +111,13 @@ def reco_page():
     # 截图
     img = screenshot()
 
+    # 文字识别
     listResults = ocr(img)[0]
+
+    # 判断界面有无文本
+    if not listResults:
+        return "无文本界面"
+
     listResultsTexts = []
     for result in listResults:
         listResultsTexts.append(result[1])
@@ -64,7 +126,7 @@ def reco_page():
         if value in listResultsTexts:  # 检测到特征文本
             return key
 
-        return "未知界面"
+    return "未知界面"
 
 
 def get_scale_factor():
@@ -83,17 +145,15 @@ def get_scale_factor():
         return None
 
 
-def has_title_bar():
-    # 获取窗口的样式
-    # 注意：对于32位Python或旧版本的pywin32，可能需要使用GetWindowLong而不是GetWindowLongPtr
+def has_title_bar() -> bool:
+    """
+    判断窗口是否带有标题栏
+    """
     style = win32gui.GetWindowLong(Setting.hwnd, win32con.GWL_STYLE)
-
-    # 检查样式中是否包含WS_CAPTION
-    # 如果包含，则认为有标题栏
     return bool(style & win32con.WS_CAPTION)
 
 
-def get_window_position():
+def get_window_position() -> tuple:
     """
     获取窗口位置
     :return: 窗口位置元组
@@ -183,10 +243,10 @@ class TargetPosition(Position):
 
 
 def image_match(
-    img: np.ndarray,
-    imgTemplate: np.ndarray,
-    region: tuple = None,
-    threshold: float = 0.8,
+        img: np.ndarray,
+        imgTemplate: np.ndarray,
+        region: tuple = None,
+        threshold: float = 0.8,
 ):
     """
     使用 opencv matchTemplate 方法在指定区域内进行模板匹配并返回匹配结果
@@ -226,10 +286,334 @@ def image_match(
     )
 
 
+def text_match(text: str):
+    img = screenshot()
+    listResults = ocr(img)[0]
+
+    if not listResults:
+        return text_match(text)
+    for result in listResults:
+        if text == result[1]:
+            box = result[0]
+            confidence = result[2]
+            if confidence > Setting.threshold:
+                return TargetPosition(
+                    x1=box[0][0],
+                    y1=box[0][1],
+                    x2=box[2][0],
+                    y2=box[2][1],
+                    confidence=confidence,
+                )
+
+    return None
+
+
+def textcrop_match(text: str):
+    img = screenshot()
+    listResults = ocr(img)[0]
+
+    if not listResults:
+        return text_match(text)
+    for result in listResults:
+        if text in result[1]:
+            box = result[0]
+            confidence = result[2]
+            if confidence > Setting.threshold:
+                return TargetPosition(
+                    x1=box[0][0],
+                    y1=box[0][1],
+                    x2=box[2][0],
+                    y2=box[2][1],
+                    confidence=confidence,
+                )
+
+    return None
+
+
+def reco_image(text: str):
+    """
+    检测画面是否存在模板图片
+    :return:
+    """
+    # 截图
+    img = screenshot()
+
+    # 导入主页模板图片并创建列表
+    template = cv2.imread(Setting.dictTemplate[text], 0)
+
+    # 转换为cv2图像
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+    return image_match(img, template)  # 使用模板匹配
+
+
+def ocr_roi(region: tuple):
+    """
+    使用ocr识别特定区域文字
+    :param region: 裁切区域
+    :return: 目标字符串字典
+    """
+    img = screenshot()
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 裁剪
+    x1, y1, x2, y2 = region
+    cropped_img = img[y1:y2, x1:x2]
+
+    listResults = ocr(cropped_img)[0]
+    dictResults = {}
+    for result in listResults:
+        text = result[1]
+        box = result[0]
+        confidence = result[2]
+
+        # 创建实例
+        dictResults[text] = TargetPosition(
+            x1=box[0][0] + x1,
+            y1=box[0][1] + y1,
+            x2=box[2][0] + x1,
+            y2=box[2][1] + y1,
+            confidence=confidence,
+        )
+
+    return dictResults
+
+
 def calculate_boxCenter(box: TargetPosition):
     x = (box.x1 + box.x2) / 2
     y = (box.y1 + box.y2) / 2
     return int(x), int(y)
+
+
+class Control:
+    def click(self, x=0, y=0):
+        x = x if isinstance(x, int) else int(x)
+        y = y if isinstance(y, int) else int(y)
+        x = x + Setting.windowPosition[0]
+        y = y + Setting.windowPosition[1]
+        win32api.SetCursorPos((x, y))
+        time.sleep(0.1)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0)
+        time.sleep(0.1)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0)
+
+    def random_click(
+            self,
+            x: int = None,
+            y: int = None,
+            range_x: int = 3,
+            range_y: int = 3,
+            ratio: bool = False,
+            need_print: bool = False,
+    ):
+        """
+        在以 (x, y) 为中心的区域内随机选择一个点并模拟点击。
+
+        :param x: 中心点的 x 坐标
+        :param y: 中心点的 y 坐标
+        :param range_x: 水平方向随机偏移的范围
+        :param range_y: 垂直方向随机偏移的范围
+        :param ratio: 是否将坐标进行缩放
+        :param need_print: 是否输出log，debug用
+        """
+        random_x = x + np.random.uniform(-range_x, range_x)
+        random_y = y + np.random.uniform(-range_y, range_y)
+
+        # 将浮点数坐标转换为整数像素坐标
+        if ratio:
+            # 需要缩放
+            random_x = int(random_x * Setting.scaleFactor)
+            random_y = int(random_y * Setting.scaleFactor)
+        else:
+            # 不需要缩放
+            random_x = int(random_x)
+            random_y = int(random_y)
+
+        # 点击
+        time.sleep(np.random.uniform(0, 0.1))  # 随机等待后点击
+        self.click(random_x, random_y)
+
+    def click_box(self, box: TargetPosition):
+        """
+        点击目标框
+        :param box: 目标框
+        """
+        center = calculate_boxCenter(box)
+        self.random_click(
+            center[0],
+            center[1],
+            range_x=center[0] - box.x1,
+            range_y=center[1] - box.y1
+        )
+
+    @confirm_click()
+    def click_text(self, text: str):
+        """
+        点击文字区域
+        :param text: 目标文字
+        :return: 点击成功与否的布尔值
+        """
+        box = text_match(text)
+        if box:
+            self.click_box(box)
+            return True
+        else:
+            return False
+
+    @confirm_click()
+    def click_home(self):
+        """
+        点击主页按钮
+        :return: 点击成功与否的布尔值
+        """
+        # 截图
+        img = screenshot()
+
+        # 导入主页模板图片并创建列表
+        templateBlack = cv2.imread('template/mainpage_black.png', 0)
+        templateWhite = cv2.imread('template/mainpage_white.png', 0)
+        listTemplate = [templateWhite, templateBlack]
+
+        # 转换为cv2图像
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+        detected = False  # 判断是否找到
+        position = None  # 记录位置
+        for template in listTemplate:
+            position = image_match(img, template)  # 使用模板匹配
+
+            if position:
+                detected = True
+                break
+
+        if detected:
+            center = calculate_boxCenter(position)
+            control.random_click(center[0], center[1])
+            return True
+        else:
+            return False
+
+    @confirm_click()
+    def click_space(self):
+        """
+        带识别文字的点击空白处
+        :return: 点击成功与否的布尔值
+        """
+        img = screenshot()
+        listResults = ocr(img)[0]
+        for result in listResults:
+            if result[1] == "点击空白处关闭":
+                self.click_blank()
+                return True
+
+        return False
+
+    def click_blank(self):
+        """
+        点击空白处
+        """
+        self.random_click(
+            Setting.screenWidth / 2,
+            Setting.screenHeight / 10 * 9,
+            range_x=Setting.screenWidth / 4,
+            range_y=Setting.screenHeight / 10
+        )
+
+    @confirm_click()
+    def click_image(self, text: str):
+        """
+        点击图片区域
+        :param text: 图片名
+        :return: 点击成功与否的布尔值
+        """
+        # 截图
+        img = screenshot()
+
+        # 导入主页模板图片并创建列表
+        template = cv2.imread(Setting.dictTemplate[text], 0)
+
+        # 转换为cv2图像
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+        position = image_match(img, template)  # 使用模板匹配
+
+        if position:
+            center = calculate_boxCenter(position)
+            control.random_click(center[0], center[1])
+            return True
+        else:
+            return False
+
+
+control = Control()
+
+
+def battle():
+    """
+    战斗函数
+    """
+    boolAutoBattle = False  # 自动战斗状态
+    boolBattle = False  # 战斗状态
+    now = time.time()
+    while True:
+        if time.time() - now > 60:  # 60秒后超时
+            return "作战超时"
+
+        pageNow = reco_page()
+
+        if pageNow in "加载":
+            time.sleep(1)
+            now = time.time()
+
+        elif pageNow == "未知界面":
+            if boolBattle and not boolAutoBattle:  # 战斗开始但未进入自动战斗
+                box = reco_image("自动战斗")
+                if box:
+                    control.click_box(box)
+                    boolAutoBattle = True
+                    now = time.time()
+
+            elif boolBattle and boolAutoBattle:  # 自动战斗中
+                time.sleep(1)
+                now = time.time()
+
+        elif pageNow == "作战准备":
+            control.click_text("作战开始")
+            boolBattle = True
+            now = time.time()
+
+        elif pageNow == "晋升":
+            control.click_blank()
+            time.sleep(2)
+
+        elif pageNow == "伤害统计":
+            control.click_text("确认")
+
+            # 战斗结束等待返回UI界面
+            time.sleep(5)
+            return "战斗结束"
+
+        elif pageNow == "任务完成":
+            boolBattle = False
+            control.click_blank()
+            time.sleep(2)
+
+
+def login():
+    while True:
+        pageNow = reco_page()
+        print(pageNow)
+        if pageNow == "主界面":
+            return "登录成功"
+
+        if pageNow in ["登录", "收获"]:
+            control.click_blank()
+            time.sleep(1)
+            continue
+
+        if pageNow in ["加载", "未知界面", "无文本界面"]:
+            time.sleep(1)
+            continue
 
 
 def refresh_setting():
@@ -249,3 +633,8 @@ def refresh_setting():
     Setting.windowBar = has_title_bar()  # 窗口是否有标题栏
     Setting.windowPosition = get_window_position()  # 获取窗口位置
     return True
+
+
+if __name__ == '__main__':
+    running = refresh_setting()
+    print(reco_page())
