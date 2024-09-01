@@ -1,5 +1,10 @@
+import json
+import os
+import subprocess
 import time
 from ctypes import windll
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 import win32api
@@ -10,14 +15,34 @@ from pydantic import BaseModel, Field
 from constants import Setting
 
 from rapidocr_openvino import RapidOCR
+ocr = RapidOCR(
+    min_height=210,
+    det_limit_side_len=40,
+)
 
-ocr = RapidOCR(det_limit_side_len=40)
+@dataclass
+class CropImage:
+    image: np.ndarray = None
+    position: tuple = (0, 0)
 
 
-class ImageModel():
-    def __init__(self, image: np.ndarray = None, position: tuple = (0, 0)):
-        self.image = image
-        self.position = position
+
+def timer(func):
+    """
+    一个装饰器，用于计算并打印函数的执行时间
+    """
+    def wrapper(*args, **kwargs):
+        # 记录开始时间
+        start_time = time.time()
+        # 调用原函数
+        result = func(*args, **kwargs)
+        # 记录结束时间
+        end_time = time.time()
+        # 计算并打印执行时间
+        print(f"{func.__name__} executed in {end_time - start_time:.8f} seconds")
+        # 返回原函数的返回值
+        return result
+    return wrapper
 
 
 def crop_image(
@@ -49,7 +74,7 @@ def crop_image(
         y2 = int(Setting.screenWidth * ratio[3])
 
     img = image[y1:y2, x1:x2]
-    return ImageModel(image=img, position=(x1, y1))
+    return CropImage(image=img, position=(x1, y1))
 
 
 def confirm_click(timeout=30):
@@ -240,6 +265,10 @@ class Position(BaseModel):
 
 class TargetPosition(Position):
     confidence: float = Field(0, title="识别置信度")
+
+
+class SpecialPositionJson(Position):
+    textSpecial: str = Field(None, title="特征文本")
 
 
 def image_match(
@@ -616,6 +645,27 @@ def login():
             continue
 
 
+def delete_pagejson():
+    """
+    启动时若检测到屏幕分辨率或缩放因子与预设不同，则删除page文件夹内的预设
+    """
+    path = 'page'
+
+    for filename in os.listdir(path):
+        file_path = os.path.join(path, filename)
+        os.remove(file_path)
+
+
+def start_game():
+    """
+    启动游戏
+    """
+    with open('config.json', 'r') as f:
+        data = json.load(f)
+
+    subprocess.Popen(data['gamepath'])
+
+
 def refresh_setting():
     """
     刷新设置
@@ -628,8 +678,19 @@ def refresh_setting():
     # 切换窗口至前台
     win32gui.SetForegroundWindow(Setting.hwnd)
 
-    Setting.screenWidth, Setting.screenHeight = get_resolution(screenshot())
-    Setting.scaleFactor = get_scale_factor()  # 获取缩放比例
+    screenWidth, screenHeight = get_resolution(screenshot())
+    scaleFactor = get_scale_factor()  # 获取缩放比例
+    if (
+            Setting.screenWidth != screenWidth or
+            Setting.screenHeight != screenHeight or
+            Setting.scaleFactor != scaleFactor
+    ):  # 如果界面分辨率和屏幕缩放因子与预设不同，则删除page文件夹内的预设重新获取
+        Setting.screenWidth = screenWidth
+        Setting.screenHeight = screenHeight
+        Setting.scaleFactor = get_scale_factor()
+
+        delete_pagejson()  # 删除page文件夹内的预设
+
     Setting.windowBar = has_title_bar()  # 窗口是否有标题栏
     Setting.windowPosition = get_window_position()  # 获取窗口位置
     return True

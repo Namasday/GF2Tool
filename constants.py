@@ -3,11 +3,9 @@ import json
 
 class Setting:
     """
-    各种预设属性
+    整合所有全局属性
     """
-    screenWidth = 3840  # 屏幕分辨率
-    screenHeight = 2160  # 屏幕分辨率
-    scaleFactor = 1  # 屏幕缩放系数
+    enlarge = 5  # 局部图像区域放大像素数
 
     # 键为页面名，值为页面特征文字
     textdictReco = {
@@ -17,14 +15,13 @@ class Setting:
         "整备室": "云图强固",
         "智能导航光屏": "智能导航光屏",
         "公共区": "调度室",
-        "调度室": "调度收益",
+        "调度室": "调度考核",
         "情报储备": "情报储备情况",
         "资源生产": "每小时产量",
         "班组补给": "班组领取记录",
         "班组要务": "每日要务",
-        "设置": "设置",
+        "设置": "退出账号",
         "登录": "点击开始",
-        "演习": "布设防御",
         "限时开启": "定期参与活动可获得丰厚报酬",
         "剧情战役": "猎人评定",
         "模拟作战": "心智勘测",
@@ -103,4 +100,7 @@ class Setting:
     with open("config.json", "r") as f:
         data = json.load(f)
 
-    timeslimitBattle = data['timeslimitBattle']
+    timeslimitBattle = data['timeslimitBattle']  # 战斗次数限制
+    screenWidth = data['screenWidth']  # 屏幕分辨率
+    screenHeight = data['screenHeight']  # 屏幕分辨率
+    scaleFactor = data['scaleFactor']  # 屏幕缩放系数

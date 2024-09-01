@@ -4,7 +4,6 @@ from constants import Setting
 from page import ShiBingYanXi
 from utils import locate, control, text_match, battle
 
-
 class Task:
     def done(self, time=5):
         """
