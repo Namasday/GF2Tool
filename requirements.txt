@@ -1,5 +1,5 @@
-pywin32
-numpy
+pywin32~=306
+numpy~=1.26.4
 rapidocr-openvino
-pydantic
-opencv-python
+pydantic~=2.8.2
+opencv-python~=4.10.0.84

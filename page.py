@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import time
 from ctypes import windll
 
 import numpy as np
@@ -11,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from constants import Setting
 from control import Control
-from utils import timer, ocr, logger
+from utils import timer, ocr, logger, PositionModel
 
 # 预设页面列表
 listDictPages = [
@@ -143,19 +144,6 @@ listDictPages = [
         "route": []
     },
 ]
-
-
-class PositionModel(BaseModel):
-    """
-    位置模型
-    """
-    x1: int = Field(None, title="x1")
-    y1: int = Field(None, title="y1")
-    x2: int = Field(None, title="x2")
-    y2: int = Field(None, title="y2")
-
-    def __str__(self):
-        return f"({self.x1}, {self.y1}, {self.x2}, {self.y2})"
 
 
 class TextModel(BaseModel):
@@ -339,6 +327,20 @@ def start_game():
     subprocess.Popen(data['gamepath'])
 
 
+def get_scale_factor():
+    """
+    获取显示器的缩放系数
+    :return: 缩放系数
+    """
+    try:
+        windll.shcore.SetProcessDpiAwareness(1)  # 设置进程的 DPI 感知
+        scale_factor = windll.shcore.GetScaleFactorForDevice(0)  # 获取主显示器的缩放因子
+        return scale_factor / 100  # 返回百分比形式的缩放因子
+    except Exception as e:
+        print("Error:", e)
+        return None
+
+
 class Page:
     """
     页面类，包含一些基本页面识别方法
@@ -354,6 +356,7 @@ class Page:
         self.windowPosition = None  # 窗口位置
 
         self.__refresh_setting()  # 初始化设置
+        get_scale_factor()  # 获取屏幕缩放因子
         self.control = Control(
             windowPosition=self.windowPosition
         )
@@ -441,7 +444,6 @@ class Page:
 
         # 切换窗口至前台
         win32gui.SetForegroundWindow(self.hwnd)
-
         screenWidth, screenHeight = self.get_resolution()
         if (
                 Setting.screenWidth != screenWidth or
@@ -507,7 +509,7 @@ class Page:
         """
         model = self.dictPages[pageName]
         signRecordPos = get_signRecordPos(model)
-        if signRecordPos:  # 目标页面特征位置是否需要记录
+        if signRecordPos:  # 目标页面特征位置需要记录
             pageNameReco = self.reco_page()
             if pageNameReco == pageName:
                 return True
@@ -577,6 +579,11 @@ class Page:
             route.reverse()  # 路径列表反转
             return route
 
+    def retrun_to_mainPage(self):
+        """
+        返回主页
+        """
+
     def locate(self, pageName:str):
         """
         导航至目标界面
@@ -589,8 +596,25 @@ class Page:
         if self.pageName in route:  # 当前界面是否在寻路路径中
             route = route[route.index(self.pageName):]  # 从当前界面开始截取寻路路径
 
+        else:
+            self.retrun_to_mainPage()
+
+        for index, routePageName in enumerate(route):
+            if index + 1 >= len(route):  # 判断是否为最后一个界面
+                break
+
+            modelPage = self.dictPages[routePageName]
+            pos = None
+            for modelPageRoute in modelPage.route:
+                if route[index + 1] == modelPageRoute.pageName:  # 判断是否为下一个界面
+                    pos = modelPageRoute.modelDirectText.pos
+                    break
+
+            self.control.random_click(pos)
+            while not self.confirm_page(route[index + 1]):
+                time.sleep(0.3)
+
 
 if __name__ == "__main__":
     page = Page()
-    # page.reco_page()
-    print(page.find_path("实兵演习"))
+    page.locate("实兵演习")

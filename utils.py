@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+from pydantic import BaseModel, Field
+
 from constants import Setting
 
 from rapidocr_openvino import RapidOCR
@@ -12,6 +14,20 @@ ocr = RapidOCR(
     min_height=210,
     det_limit_side_len=40,
 )
+
+
+class PositionModel(BaseModel):
+    """
+    位置模型
+    """
+    x1: int = Field(None, title="x1")
+    y1: int = Field(None, title="y1")
+    x2: int = Field(None, title="x2")
+    y2: int = Field(None, title="y2")
+
+    def __str__(self):
+        return f"({self.x1}, {self.y1}, {self.x2}, {self.y2})"
+
 
 @dataclass
 class CropImage:
