@@ -15,33 +15,33 @@ from utils import refresh_setting, crop_image, SpecialPositionJson, timer, ocr, 
 listDictPages = [
     {
         "pageName": "主界面",
-        "text": "战役推进",
+        "modelSpecialText": {"text": "战役推进"},
         "route": [
             {
                 "pageName": "剧情战役",
-                "text": "战役推进",
+                "modelDirectText": {"text": "战役推进"}
             },
             {
                 "pageName": "班组",
-                "text": "班组",
+                "modelDirectText": {"text": "班组"}
             },
             {
                 "pageName": "公共区",
-                "text": "公共区",
+                "modelDirectText": {"text": "公共区"},
             }
         ]
     },
     {
         "pageName": "班组",
-        "text": "要务",
+        "modelSpecialText": {"text": "要务"},
         "route": [
             {
                 "pageName": "班组要务",
-                "text": "要务",
+                "modelDirectText": {"text": "要务"}
             },
             {
                 "pageName": "班组补给",
-                "text": "补给",
+                "modelDirectText": {"text": "补给"}
             }
         ]
     }
@@ -72,22 +72,24 @@ class TextModel(BaseModel):
         return f"文本：{self.text}, 位置：{self.modelPos}"
 
 
-class PageRouteModel(TextModel):
+class PageRouteModel(BaseModel):
     """
     页面转移路径模型
     """
     pageName: str = Field("", title="指向页面名称")
+    modelDirectText: TextModel = Field(None, title="指向文本模型")
 
     def __str__(self):
         return f"下一界面名：{self.pageName}，指向文本：{self.text}"
 
 
-class PageModel(TextModel):
+class PageModel(BaseModel):
     """
     页面模型
     """
     pageName: str = Field("", title="页面名称")
-    route: list = Field([], title="下一界面路径模型列表")
+    modelSpecialText: TextModel = Field(None, title="特征文本模型")
+    route: list[PageRouteModel] = Field([], title="次级界面路径模型列表")
 
     def __str__(self):
         return f"页面名称：{self.pageName}，特征文本：{self.text}，下一界面路径列表：{self.route}"
@@ -105,17 +107,6 @@ def get_dictPages():
             with open('page/' + dictPage['pageName'] + '.json', 'r', encoding='utf-8') as file:
                 data = json.load(file)
 
-            # text = data['text']
-            # pos = PositionModel(**data['pos'])
-            # for index, dictPageRoute in enumerate(data['route']):
-            #
-            #     data['route'][index] = PageRouteModel(**dictPageRoute)
-            #
-            # dictPage = PageModel(
-            #     text=text,
-            #     pos=pos,
-            #     route=data['route']
-            # )
             dictPage = data
 
         except FileNotFoundError:  # 不存在该页面json文件
@@ -123,12 +114,12 @@ def get_dictPages():
 
         finally:
             # 创建次级界面模型列表
-            listPageRoute = []
-            for pageRoute in dictPage['route']:
-                pageRouteModel = PageRouteModel(**pageRoute)
-                listPageRoute.append(pageRouteModel)
-
-            dictPage['route'] = listPageRoute
+            # listPageRoute = []
+            # for pageRoute in dictPage['route']:
+            #     pageRouteModel = PageRouteModel(**pageRoute)
+            #     listPageRoute.append(pageRouteModel)
+            #
+            # dictPage['route'] = listPageRoute
             _dictPages[dictPage['pageName']] = PageModel(**dictPage)
 
     return _dictPages
@@ -178,7 +169,7 @@ def ocr_textAll(image):
     识别图像中的所有文字
     """
     listResults = ocr(image)[0]
-    if len(listResults) == 0:  # 检测不到文字报错
+    if not listResults:  # 检测不到文字报错
         raise OCRResultError("未识别出文字")
 
     listTextModel = []
@@ -217,13 +208,14 @@ def ocr_crop(image, modelText: TextModel):
     return ocr_textAll(imageCrop)
 
 
-def record_pageJson(modelPage):
+def write_pageJson(modelPage):
     """
     将页面特征写入json文件
     """
-    data = modelPage.json()  # 获取页面特征json
+    data = modelPage.dict()  # 获取页面特征json
+    data = json.dumps(data, indent=4, ensure_ascii=False)  # 确保中文不会转义
     with open('page/' + modelPage.pageName + '.json', 'w', encoding='utf-8') as file:
-        file.write(data)  # 写入json文件
+        file.write(data)   # 写入json文件
 
 
 def get_signRecordPos(modelPage) -> bool:
@@ -232,11 +224,11 @@ def get_signRecordPos(modelPage) -> bool:
     :param modelPage: 页面模型
     :return: 是否记录页面特征位置
     """
-    if not modelPage.pos:  # 页面特征位置未记录
+    if not modelPage.modelSpecialText.pos:  # 页面特征位置未记录
         return True
 
     for modelPageRoute in modelPage.route:
-        if not modelPageRoute.pos:  # 次级页面特征位置未记录
+        if not modelPageRoute.modelDirectText.pos:  # 次级页面特征位置未记录
             return True
 
     return False
@@ -276,7 +268,7 @@ class Page:
                 if not signLoop1:  # 跳出内循环
                     break
 
-                if modelText.text == modelPage.text:  # 检测到页面特征文本
+                if modelText.text == modelPage.modelSpecialText.text:  # 检测到页面特征文本
                     pageName = modelPage.pageName  # 标记当前页面名
                     pos = modelText.pos  # 标记页面特征位置
                     signLoop1 = False  # 跳出内循环
@@ -286,15 +278,15 @@ class Page:
             modelPage = self.dictPages[pageName]  # 获取页面模型
             signRecordPos = get_signRecordPos(modelPage)  # 有无记录页面特征位置
             if signRecordPos:  # 需要记录页面特征位置
-                self.dictPages[pageName].pos = pos  # 记录页面特征位置
+                self.dictPages[pageName].modelSpecialText.pos = pos  # 记录页面特征位置
 
                 for modelPageRoute in modelPage.route:  # 循环记录次级页面特征位置
                     for modelText in listTextModel:
-                        if modelText.text == modelPageRoute.text:  # 检测到次级页面特征文本
-                            modelPageRoute.pos = modelText.pos  # 记录次级页面特征位置
+                        if modelText.text == modelPageRoute.modelDirectText.text:  # 检测到次级页面特征文本
+                            modelPageRoute.modelDirectText.pos = modelText.pos  # 记录次级页面特征位置
                             break
 
-                record_pageJson(self.dictPages[pageName])
+                write_pageJson(self.dictPages[pageName])
 
             self.pageName = pageName  # 记录当前页面名
             return self.pageName
@@ -309,18 +301,27 @@ class Page:
         :return: 切换成功与否
         """
         model = self.dictPages[pageName]
-        key = model.text
-        img = screenshot()
-        listTextModels = ocr_crop(img, model)
-        if len(listTextModels) == 1:  # 确保只检测出一个结果
-            if listTextModels[0].text == key:
+        signRecordPos = get_signRecordPos(model)
+        if signRecordPos:  # 目标页面特征位置是否需要记录
+            pageNameReco = self.reco_page()
+            if pageNameReco == pageName:
                 return True
-
             else:
                 return False
 
         else:
-            raise OCRResultError("OCR识别文本个数过多")
+            key = model.modelSpecialText.text
+            img = screenshot()
+            listTextModels = ocr_crop(img, model.modelSpecialText)
+            if len(listTextModels) == 1:  # 确保只检测出一个结果
+                if listTextModels[0].text == key:
+                    return True
+
+                else:
+                    return False
+
+            else:
+                raise OCRResultError("OCR识别文本个数过多")
 
     def find_path(self, pageName: str):
         """
@@ -375,4 +376,5 @@ class ShiBingYanXi(Page):
 if __name__ == "__main__":
     refresh_setting()
     pageMain = MainPage()
-    print(pageMain.confirm_page("主界面"))
+    # pageMain.reco_page()
+    print(pageMain.confirm_page("班组"))
