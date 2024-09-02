@@ -1,18 +1,21 @@
 import json
 import os
+import subprocess
 from ctypes import windll
 
 import numpy as np
+import win32con
 import win32gui
 import win32ui
 from pydantic import BaseModel, Field
 
 from constants import Setting
-from utils import refresh_setting, crop_image, SpecialPositionJson, timer, ocr, control
-
+from control import Control
+from utils import timer, ocr, logger
 
 # 预设页面列表
 listDictPages = [
+    # 主界面
     {
         "pageName": "主界面",
         "modelSpecialText": {"text": "战役推进"},
@@ -31,6 +34,35 @@ listDictPages = [
             }
         ]
     },
+
+    # 剧情战役分支
+    {
+        "pageName": "剧情战役",
+        "modelSpecialText": {"text": "猎人评定"},
+        "route": [
+            {
+                "pageName": "模拟作战",
+                "modelDirectText": {"text": "模拟作战"}
+            }
+        ]
+    },
+    {
+        "pageName": "模拟作战",
+        "modelSpecialText": {"text": "心智勘测"},
+        "route": [
+            {
+                "pageName": "实兵演习",
+                "modelDirectText": {"text": "实兵演习"}
+            }
+        ]
+    },
+    {
+        "pageName": "实兵演习",
+        "modelSpecialText": {"text": "布设防御"},
+        "route": []
+    },
+
+    # 班组分支
     {
         "pageName": "班组",
         "modelSpecialText": {"text": "要务"},
@@ -42,9 +74,74 @@ listDictPages = [
             {
                 "pageName": "班组补给",
                 "modelDirectText": {"text": "补给"}
+            },
+            {
+                "pageName": "尘烟前线",
+                "modelDirectText": {"text": "尘烟前线"}
             }
         ]
-    }
+    },
+    {
+        "pageName": "班组要务",
+        "modelSpecialText": {"text": "每日要务"},
+        "route": []
+    },
+    {
+        "pageName": "班组补给",
+        "modelSpecialText": {"text": "班组领取记录"},
+        "route": []
+    },
+    {
+        "pageName": "尘烟前线",
+        "modelSpecialText": {"text": "班组表现"},
+        "route": []
+    },
+
+    # 公共区分支
+    {
+        "pageName": "公共区",
+        "modelSpecialText": {"text": "武器陈列室"},
+        "route": [
+            {
+                "pageName": "休息室",
+                "modelDirectText": {"text": "休息室"}
+            },
+            {
+                "pageName": "调度室",
+                "modelDirectText": {"text": "调度室"}
+            }
+        ]
+    },
+    {
+        "pageName": "休息室",
+        "modelSpecialText": {"text": "赠礼"},
+        "route": []
+    },
+    {
+        "pageName": "调度室",
+        "modelSpecialText": {"text": "调度考核"},
+        "route": [
+            {
+                "pageName": "情报储备",
+                "modelDirectText": {"text": "调度收益"}
+            }
+        ]
+    },
+    {
+        "pageName": "情报储备",
+        "modelSpecialText": {"text": "情报储备情况"},
+        "route": [
+            {
+                "pageName": "资源生产",
+                "modelDirectText": {"text": "资源生产"}
+            }
+        ]
+    },
+    {
+        "pageName": "资源生产",
+        "modelSpecialText": {"text": "每小时产量"},
+        "route": []
+    },
 ]
 
 
@@ -95,6 +192,36 @@ class PageModel(BaseModel):
         return f"页面名称：{self.pageName}，特征文本：{self.text}，下一界面路径列表：{self.route}"
 
 
+def read_pageJson(dictPage):
+    """
+    读取页面json文件
+    :return: 页面模型列表
+    """
+    try:  # 存在该页面json文件
+        with open("page/" + dictPage['pageName'] + ".json", 'r', encoding='utf-8') as file:
+            data = json.load(file)
+
+        listDataRoute = []  # 预设路径文本列表
+        for pageRoute in data['route']:
+            listDataRoute.append(pageRoute['modelDirectText']['text'])
+
+        listDictPagesRoute = []  # 默认路径文本列表
+        for pageRoute in dictPage['route']:
+            listDictPagesRoute.append(pageRoute['modelDirectText']['text'])
+
+        if (
+                data['modelSpecialText']['text'] == dictPage['modelSpecialText']['text'] and  # 特征文本与预设一致
+                listDictPagesRoute == listDataRoute  # 下一界面路径与预设一致
+        ):
+            return data
+
+        else:
+            return dictPage
+
+    except FileNotFoundError:  # 不存在该页面json文件
+        return dictPage
+
+
 def get_dictPages():
     """
     获取页面模型列表
@@ -102,59 +229,10 @@ def get_dictPages():
     """
     _dictPages = {}  # 初始化全页面
     for dictPage in listDictPages:
-        # 检索是否存在该页面json文件
-        try:  # 存在该页面json文件
-            with open('page/' + dictPage['pageName'] + '.json', 'r', encoding='utf-8') as file:
-                data = json.load(file)
-
-            dictPage = data
-
-        except FileNotFoundError:  # 不存在该页面json文件
-            pass
-
-        finally:
-            # 创建次级界面模型列表
-            # listPageRoute = []
-            # for pageRoute in dictPage['route']:
-            #     pageRouteModel = PageRouteModel(**pageRoute)
-            #     listPageRoute.append(pageRouteModel)
-            #
-            # dictPage['route'] = listPageRoute
-            _dictPages[dictPage['pageName']] = PageModel(**dictPage)
+        dictPage = read_pageJson(dictPage)  # 检索是否存在该页面json文件
+        _dictPages[dictPage['pageName']] = PageModel(**dictPage)
 
     return _dictPages
-
-
-def screenshot():
-    """
-    截图
-    ：return: 截取到的图像np数组
-    """
-    hwndDC = win32gui.GetWindowDC(Setting.hwnd)  # 获取窗口设备上下文（DC）
-    mfcDC = win32ui.CreateDCFromHandle(hwndDC)  # 创建mfcDC
-    saveDC = mfcDC.CreateCompatibleDC()  # 创建与mfcDC兼容的DC
-    saveBitMap = win32ui.CreateBitmap()  # 创建一个位图对象
-    saveBitMap.CreateCompatibleBitmap(mfcDC, Setting.screenWidth, Setting.screenHeight)  # 创建与mfcDC兼容的位图
-    saveDC.SelectObject(saveBitMap)  # 选择saveDC的位图对象，准备绘图
-    # 尝试使用PrintWindow函数截取窗口图像
-    windll.user32.PrintWindow(Setting.hwnd, saveDC.GetSafeHdc(), 3)
-
-    # 从位图中获取图像数据
-    bmp_info = saveBitMap.GetInfo()  # 获取位图信息
-    bmp_str = saveBitMap.GetBitmapBits(True)  # 获取位图数据
-    im = np.frombuffer(bmp_str, dtype="uint8")  # 将位图数据转换为numpy数组
-    im.shape = (bmp_info["bmHeight"], bmp_info["bmWidth"], 4)  # 设置数组形状
-    # 调整通道顺序并去除alpha通道
-    im = im[:, :, :3]
-    im = im[:, :, [2, 1, 0]]
-
-    # 清理资源
-    win32gui.DeleteObject(saveBitMap.GetHandle())
-    saveDC.DeleteDC()
-    mfcDC.DeleteDC()
-    win32gui.ReleaseDC(Setting.hwnd, hwndDC)
-
-    return im  # 返回截取到的图像
 
 
 class OCRResultError(Exception):
@@ -170,7 +248,7 @@ def ocr_textAll(image):
     """
     listResults = ocr(image)[0]
     if not listResults:  # 检测不到文字报错
-        raise OCRResultError("未识别出文字")
+        return None
 
     listTextModel = []
     for result in listResults:
@@ -241,21 +319,148 @@ class UnknownPage(Exception):
     pass
 
 
+def delete_pagejson():
+    """
+    启动时若检测到屏幕分辨率或缩放因子与预设不同，则删除page文件夹内的预设
+    """
+    path = 'page'
+    for filename in os.listdir(path):
+        file_path = os.path.join(path, filename)
+        os.remove(file_path)
+
+
+def start_game():
+    """
+    启动游戏
+    """
+    with open('config.json', 'r') as f:
+        data = json.load(f)
+
+    subprocess.Popen(data['gamepath'])
+
+
 class Page:
     """
     页面类，包含一些基本页面识别方法
     """
 
     def __init__(self):
+        # 声明
         self.pageName = None  # 页面名称
         self.dictPages = get_dictPages()  # 获取页面字典
+        self.route = []  # 路径界面名列表
+        self.hwnd = None  # 窗口句柄
+        self.boolWindowBar = None  # 窗口栏是否显示
+        self.windowPosition = None  # 窗口位置
+
+        self.__refresh_setting()  # 初始化设置
+        self.control = Control(
+            windowPosition=self.windowPosition
+        )
+
+    def get_resolution(self):
+        """
+        获取页面分辨率
+        :param image: np图像
+        :return:分辨率元组
+        """
+        img = self.screenshot()
+        black_pixels_y = np.where(np.all(img[0] == 0, axis=1))[0]
+        if black_pixels_y.size > 0:
+            width = int(black_pixels_y[0])
+        else:
+            width = 3840
+
+        black_pixels_x = np.where(np.all(img[:, 0] == 0, axis=1))[0]
+        if black_pixels_x.size > 0:
+            height = int(black_pixels_x[0])
+        else:
+            height = 2160
+
+        return width, height
+
+    def screenshot(self):
+        """
+        截图
+        ：return: 截取到的图像np数组
+        """
+        hwndDC = win32gui.GetWindowDC(self.hwnd)  # 获取窗口设备上下文（DC）
+        mfcDC = win32ui.CreateDCFromHandle(hwndDC)  # 创建mfcDC
+        saveDC = mfcDC.CreateCompatibleDC()  # 创建与mfcDC兼容的DC
+        saveBitMap = win32ui.CreateBitmap()  # 创建一个位图对象
+        saveBitMap.CreateCompatibleBitmap(mfcDC, Setting.screenWidth, Setting.screenHeight)  # 创建与mfcDC兼容的位图
+        saveDC.SelectObject(saveBitMap)  # 选择saveDC的位图对象，准备绘图
+        # 尝试使用PrintWindow函数截取窗口图像
+        windll.user32.PrintWindow(self.hwnd, saveDC.GetSafeHdc(), 3)
+
+        # 从位图中获取图像数据
+        bmp_info = saveBitMap.GetInfo()  # 获取位图信息
+        bmp_str = saveBitMap.GetBitmapBits(True)  # 获取位图数据
+        im = np.frombuffer(bmp_str, dtype="uint8")  # 将位图数据转换为numpy数组
+        im.shape = (bmp_info["bmHeight"], bmp_info["bmWidth"], 4)  # 设置数组形状
+        # 调整通道顺序并去除alpha通道
+        im = im[:, :, :3]
+        im = im[:, :, [2, 1, 0]]
+
+        # 清理资源
+        win32gui.DeleteObject(saveBitMap.GetHandle())
+        saveDC.DeleteDC()
+        mfcDC.DeleteDC()
+        win32gui.ReleaseDC(self.hwnd, hwndDC)
+
+        return im  # 返回截取到的图像
+
+    def __has_title_bar(self) -> bool:
+        """
+        判断窗口是否带有标题栏
+        """
+        style = win32gui.GetWindowLong(self.hwnd, win32con.GWL_STYLE)
+        return bool(style & win32con.WS_CAPTION)
+
+    def get_window_position(self) -> tuple:
+        """
+        获取窗口位置
+        :return: 窗口位置元组
+        """
+        rect = win32gui.GetWindowRect(self.hwnd)
+        if self.boolWindowBar:  # 如果有标题栏
+            pos = (rect[0], rect[1] + Setting.titleBarHeight)
+        else:  # 如果没有标题栏
+            pos = (rect[0], rect[1])
+        return pos
+
+    def __refresh_setting(self):
+        """
+        刷新设置
+        :return: 检测窗口是否存在的布尔值
+        """
+        self.hwnd = win32gui.FindWindow("UnityWndClass", "少女前线2：追放")
+        if not self.hwnd:
+            logger("未找到游戏窗口，启动游戏")
+            start_game()  # 启动游戏
+
+        # 切换窗口至前台
+        win32gui.SetForegroundWindow(self.hwnd)
+
+        screenWidth, screenHeight = self.get_resolution()
+        if (
+                Setting.screenWidth != screenWidth or
+                Setting.screenHeight != screenHeight
+        ):  # 如果界面分辨率和屏幕缩放因子与预设不同，则删除page文件夹内的预设重新获取
+            Setting.screenWidth = screenWidth
+            Setting.screenHeight = screenHeight
+
+            delete_pagejson()  # 删除page文件夹内的预设
+
+        self.boolWindowBar = self.__has_title_bar()  # 窗口是否有标题栏
+        self.windowPosition = self.get_window_position()  # 获取窗口位置
 
     def reco_page(self):
         """
         识别当前页面
         :return: 页面名
         """
-        img = screenshot()
+        img = self.screenshot()
         listTextModel = ocr_textAll(img)
 
         signLoop0 = True  # 外循环信号
@@ -311,8 +516,11 @@ class Page:
 
         else:
             key = model.modelSpecialText.text
-            img = screenshot()
+            img = self.screenshot()
             listTextModels = ocr_crop(img, model.modelSpecialText)
+            if not listTextModels:  # 未识别出文本
+                return False
+
             if len(listTextModels) == 1:  # 确保只检测出一个结果
                 if listTextModels[0].text == key:
                     return True
@@ -323,58 +531,66 @@ class Page:
             else:
                 raise OCRResultError("OCR识别文本个数过多")
 
-    def find_path(self, pageName: str):
+    def __find_path_loop(self, pageName: str):
         """
-        寻路
+        寻路循环体
         :param pageName: 目标界面名
         :return: 路径界面名列表
         """
+        check = False  # 查找是否有所求页面
+        for modelPage in self.dictPages.values():
+            if modelPage.pageName == pageName:
+                self.route.append(pageName)
+                check = True
+                break
 
-
-class MainPage(Page):
-    """
-    主页类，用于任务模块界面的切换
-    """
-
-    def __init__(self):
-        super().__init__()
-
-    def change(self, pageName: str):
-        """
-        切换页面
-        """
-        self.reco_page()
-        try:  # 如果页面存在该子页面
-            textSpecial = dictPages[self.pageName].pageSon[pageName]
-            control.click_text(textSpecial)
-            while True:
-                self.confirm_page(pageName)
-                print(self.pageName)
-                if self.pageName == pageName:
+        if check:
+            signLoop0 = True  # 外循环信号
+            for modelPage in self.dictPages.values():
+                if not signLoop0:  # 跳出外循环
                     break
 
-        except KeyError:  # 如果页面不存在该子页面
-            print('当前页面不存在目标子页面')
+                signLoop1 = True  # 内循环信号
+                for modelPageRoute in modelPage.route:
+                    if not signLoop1:  # 跳出内循环
+                        break
 
+                    if modelPageRoute.pageName == pageName:
+                        self.__find_path_loop(modelPage.pageName)
+                        signLoop1 = False  # 跳出内循环
+                        signLoop0 = False  # 跳出外循环
 
-class ShiBingYanXi(Page):
-    """
-    实兵演习界面
-    """
-
-    def check_battletimes(self):
+    def find_path(self, pageName: str):
         """
-        检查战斗次数
-        :return: 战斗次数
+        寻路并重置路径
+        :param pageName: 目标界面名
+        :return: 路径界面名列表
         """
-        img = screenshot()  # 截图
-        imgBattleTimes = crop_image(img, area=(3650, 60, 3740, 110))
-        timesBattle = int(ocr_textAll(imgBattleTimes.image)[0][0][1][0])
-        return timesBattle
+        self.__find_path_loop(pageName)
+        route = self.route
+
+        if len(route) == 0:  # 路径长度为0
+            raise UnknownPage(f"无法到达页面：{pageName}，请检查listDictPages预设")
+
+        else:
+            self.route = []
+            route.reverse()  # 路径列表反转
+            return route
+
+    def locate(self, pageName:str):
+        """
+        导航至目标界面
+        :param pageName:
+        :return:
+        """
+        route = self.find_path(pageName)  # 寻路
+        self.reco_page()  # 识别当前界面
+
+        if self.pageName in route:  # 当前界面是否在寻路路径中
+            route = route[route.index(self.pageName):]  # 从当前界面开始截取寻路路径
 
 
 if __name__ == "__main__":
-    refresh_setting()
-    pageMain = MainPage()
-    # pageMain.reco_page()
-    print(pageMain.confirm_page("班组"))
+    page = Page()
+    # page.reco_page()
+    print(page.find_path("实兵演习"))
