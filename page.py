@@ -362,6 +362,49 @@ def write_imageJson(modelImage):
         file.write(data)  # 写入json文件
 
 
+def image_match(
+        img: np.ndarray,
+        imgTemplate: np.ndarray,
+        area: PositionModel = PositionModel(
+            x1=0,
+            y1=0,
+            x2=Setting.screenWidth,
+            y2=Setting.screenHeight
+        )
+):
+    """
+    使用 opencv matchTemplate 方法在指定区域内进行模板匹配并返回匹配结果
+    :param img:  大图片
+    :param imgTemplate: 小图片
+    :param area: 区域模型
+    :return: ImgPosition 或 None
+    """
+    # 判断是否为灰度图，如果不是转换为灰度图
+    if len(img.shape) == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    if len(imgTemplate.shape) == 3:
+        imgTemplate = cv2.cvtColor(imgTemplate, cv2.COLOR_BGR2GRAY)
+
+    img = img[area.y1:area.y2, area.x1:area.x2]
+    # 模板图片根据屏幕分辨率宽度进行缩放
+    ratio = Setting.screenWidth / 3840
+    imgTemplate = cv2.resize(imgTemplate, None, fx=ratio, fy=ratio, interpolation=cv2.INTER_AREA)
+
+    # 模板匹配
+    res = cv2.matchTemplate(img, imgTemplate, cv2.TM_CCOEFF_NORMED)
+    confidence = np.max(res)
+    if confidence < Setting.threshold:
+        return None
+    max_loc = np.where(res == confidence)
+
+    return PositionModel(
+        x1=area.x1 + max_loc[1][0],
+        y1=area.y1 + max_loc[0][0],
+        x2=area.x1 + max_loc[1][0] + imgTemplate.shape[1],
+        y2=area.y1 + max_loc[0][0] + imgTemplate.shape[0],
+    )
+
+
 class Page:
     """
     页面类，包含一些基本页面识别方法
@@ -527,7 +570,7 @@ class Page:
         except KeyError:
             return "未知界面"
 
-    def confirm_page(self, pageName: str):
+    def confirm_page(self, pageName: str) -> bool:
         """
         通过关键字识别当前页面
         :param pageName: 页面名
@@ -605,49 +648,6 @@ class Page:
             route.reverse()  # 路径列表反转
             return route
 
-    def image_match(
-            self,
-            img: np.ndarray,
-            imgTemplate: np.ndarray,
-            area: PositionModel = PositionModel(
-                x1=0,
-                y1=0,
-                x2=Setting.screenWidth,
-                y2=Setting.screenHeight
-            )
-    ):
-        """
-        使用 opencv matchTemplate 方法在指定区域内进行模板匹配并返回匹配结果
-        :param img:  大图片
-        :param imgTemplate: 小图片
-        :param area: 区域模型
-        :return: ImgPosition 或 None
-        """
-        # 判断是否为灰度图，如果不是转换为灰度图
-        if len(img.shape) == 3:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        if len(imgTemplate.shape) == 3:
-            imgTemplate = cv2.cvtColor(imgTemplate, cv2.COLOR_BGR2GRAY)
-
-        img = img[area.y1:area.y2, area.x1:area.x2]
-        # 模板图片根据屏幕分辨率宽度进行缩放
-        ratio = Setting.screenWidth / 3840
-        imgTemplate = cv2.resize(imgTemplate, None, fx=ratio, fy=ratio, interpolation=cv2.INTER_AREA)
-
-        # 模板匹配
-        res = cv2.matchTemplate(img, imgTemplate, cv2.TM_CCOEFF_NORMED)
-        confidence = np.max(res)
-        if confidence < Setting.threshold:
-            return None
-        max_loc = np.where(res == confidence)
-
-        return PositionModel(
-            x1=area.x1 + max_loc[1][0],
-            y1=area.y1 + max_loc[0][0],
-            x2=area.x1 + max_loc[1][0] + imgTemplate.shape[1],
-            y2=area.y1 + max_loc[0][0] + imgTemplate.shape[0],
-        )
-
     def reco_image(self, imageName):
         """
         :param imageName: 模板图片名
@@ -661,7 +661,7 @@ class Page:
 
         img = self.screenshot()
         imageTemplate = cv2.imread(Setting.dictTemplatePath[imageName], 0)
-        pos = self.image_match(img, imageTemplate)
+        pos = image_match(img, imageTemplate)
         if pos:
             model = TextModel(text=imageName, pos=pos)
             write_imageJson(model)
@@ -681,6 +681,8 @@ class Page:
                 self.control.random_click(model.pos)
                 return
 
+        raise UnknownPage("无法返回主界面")
+
     def confirm_loop(self, pageName: str, timeWait: float = 0):
         """
         循环确认界面
@@ -696,6 +698,37 @@ class Page:
             time.sleep(self.limitRecoCD)
 
         return False  # 确认失败
+
+    def change(self, pageNow: str, pageNext):
+        """
+        切换界面
+        :param pageNow: 当前界面名
+        :param pageNext: 下一个界面名
+
+        """
+        modelPage = self.dictPages[pageNow]
+        pos = None  # 下一界面指向文本位置模型
+
+        # 寻找指向文本位置
+        for modelPageRoute in modelPage.route:
+            if pageNext == modelPageRoute.pageName:
+                pos = modelPageRoute.modelDirectText.pos
+                break
+
+        # 由于战役推进可能会指向3个界面，所以设立此项
+        listSpecialPage = ['剧情战役', '模拟作战']
+
+        # 切换界面
+        while True:  # 仍处于当前界面
+            if self.confirm_page(pageNow):  # 确认界面
+                self.control.random_click(pos)
+
+            if self.confirm_page(pageNext):  # 确认界面
+                return
+            elif pageNext in listSpecialPage:  # 特殊界面
+                for pageName in listSpecialPage:  # 特殊界面
+                    if self.confirm_page(pageName):  # 确认界面
+                        return
 
     def locate(self, pageName:str):
         """
@@ -720,26 +753,9 @@ class Page:
             if index + 1 >= len(route):  # 判断是否为最后一个界面
                 break
 
-            modelPage = self.dictPages[routePageName]
-            pos = None
-            for modelPageRoute in modelPage.route:
-                if route[index + 1] == modelPageRoute.pageName:  # 判断是否为下一个界面
-                    pos = modelPageRoute.modelDirectText.pos
-                    break
-
-            if not pos:
-                return self.locate(pageName)
-
-            while True:
-                if self.confirm_page(routePageName):
-                    self.control.random_click(pos)
-
-                if self.confirm_loop(route[index + 1]):
-                    break
-                else:
-                    return self.locate(pageName)
+            self.change(route[index], route[index + 1])
 
 
 if __name__ == "__main__":
     page = Page()
-    page.locate('班组补给')
+    page.locate('资源生产')
