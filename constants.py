@@ -45,3 +45,4 @@ class Setting:
     timeslimitBattle = data['timeslimitBattle']  # 战斗次数限制
     screenWidth = data['screenWidth']  # 屏幕分辨率宽度
     screenHeight = data['screenHeight']  # 屏幕分辨率高度
+    scaleFactor = data['scaleFactor']  # 缩放比例

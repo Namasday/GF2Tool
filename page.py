@@ -335,15 +335,20 @@ def start_game():
     subprocess.Popen(data['gamepath'])
 
 
-def set_dpi():
+def get_scale_factor():
     """
     获取显示器的缩放系数
     :return: 缩放系数
     """
     try:
         windll.shcore.SetProcessDpiAwareness(1)  # 设置进程的 DPI 感知
+        scale_factor = windll.shcore.GetScaleFactorForDevice(
+            0
+        )  # 获取主显示器的缩放因子
+        return scale_factor / 100  # 返回百分比形式的缩放因子
     except Exception as e:
         print("Error:", e)
+        return None
 
 
 def write_imageJson(modelImage):
@@ -421,6 +426,7 @@ class Page:
         self.hwnd = None  # 窗口句柄
         self.boolWindowBar = None  # 窗口栏是否显示
         self.windowPosition = None  # 窗口位置
+        self.scaleFactor = None  # 缩放系数
 
         self.__refresh_setting()  # 初始化设置
         self.control = Control(
@@ -511,18 +517,20 @@ class Page:
         # 切换窗口至前台
         win32gui.SetForegroundWindow(self.hwnd)
         screenWidth, screenHeight = self.get_resolution()
+        self.scaleFactor = get_scale_factor()
         if (
-                Setting.screenWidth != screenWidth or
-                Setting.screenHeight != screenHeight
+            Setting.screenWidth != screenWidth or
+            Setting.screenHeight != screenHeight or
+            Setting.scaleFactor != self.scaleFactor
         ):  # 如果界面分辨率和屏幕缩放因子与预设不同，则删除page文件夹内的预设重新获取
             Setting.screenWidth = screenWidth
             Setting.screenHeight = screenHeight
+            Setting.scaleFactor = self.scaleFactor
 
             delete_json()  # 删除page文件夹内的预设
 
         self.boolWindowBar = self.__has_title_bar()  # 窗口是否有标题栏
         self.windowPosition = self.get_window_position()  # 获取窗口位置
-        set_dpi()  # 忽略屏幕缩放系数
 
     def reco_page(self):
         """
@@ -594,6 +602,7 @@ class Page:
 
             if len(listTextModels) == 1:  # 确保只检测出一个结果
                 if listTextModels[0].text == key:
+                    self.pageName = pageName
                     return True
 
                 else:
@@ -730,7 +739,7 @@ class Page:
                     if self.confirm_page(pageName):  # 确认界面
                         return
 
-    def locate(self, pageName:str):
+    def locate(self, pageName: str):
         """
         导航至目标界面
         :param pageName:
@@ -756,6 +765,19 @@ class Page:
             self.change(route[index], route[index + 1])
 
 
+class BanZu(Page):
+    def __init__(self):
+        super().__init__()
+
+    def buji(self):
+        """
+        收获
+        :return:
+        """
+        self.locate('班组补给')
+        self.control.random_click()
+
+
 if __name__ == "__main__":
-    page = Page()
-    page.locate('资源生产')
+    page = BanZu()
+    page.buji()

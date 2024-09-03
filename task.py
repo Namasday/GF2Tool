@@ -1,7 +1,7 @@
 import time
 
 from constants import Setting
-from json import Page
+from page import Page
 from utils import battle
 
 class Task:
