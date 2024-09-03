@@ -765,19 +765,74 @@ class Page:
             self.change(route[index], route[index + 1])
 
 
-class BanZu(Page):
-    def __init__(self):
+class TaskPage(Page):
+    def __init__(self, taskName):
         super().__init__()
+        self.taskName = taskName
 
-    def buji(self):
+        self.dictText = {}  # 键为文本，值为位置模型
+        try:
+            with open("json/task/" + self.taskName + ".json", 'r', encoding='utf-8') as file:
+                self.listTextModel = json.load(file)
+
+            for modelText in self.listTextModel:
+                self.dictText[modelText.text] = modelText.pos
+
+        except FileNotFoundError:
+            pass
+
+    def write_taskJson(self):
+        """
+        写入任务界面json文件
+        """
+        jsonTextModels = []
+        for modelText in self.listTextModel:
+            data = modelText.dict()  # 获取页面特征json
+            data = json.dumps(data, indent=4, ensure_ascii=False)  # 确保中文不会转义
+            jsonTextModels.append(data)
+
+        dirpath = 'json/task'
+        if not os.path.exists(dirpath):
+            os.makedirs(dirpath)
+
+        file = os.path.join(dirpath, self.taskName + '.json')
+        with open(file, 'w', encoding='utf-8') as f:
+            json.dump(jsonTextModels, f, indent=4, ensure_ascii=False)  # 写入json文件
+
+    def click_text(self, text: str):
+        try:
+            pos = self.dictText[text]
+
+        except KeyError:
+            img = self.screenshot()
+            listTextModel = ocr_textAll(img)
+
+            for modelText in listTextModel:
+                if modelText.text == text:
+                    self.dictText[modelText.text] = modelText.pos
+                    pos = modelText.pos
+                    break
+
+            self.write_taskJson()
+
+        finally:
+            pass
+
+
+class BanZuBuji(TaskPage):
+    def __init__(self):
+        self.taskName = '班组补给'
+        super().__init__(self.taskName)
+
+    def run(self):
         """
         收获
         :return:
         """
         self.locate('班组补给')
-        self.control.random_click()
+        self.click_text('一键领取')
 
 
 if __name__ == "__main__":
-    page = BanZu()
-    page.buji()
+    page = Page()
+    page.locate('实兵演习')
