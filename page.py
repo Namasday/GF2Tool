@@ -1,9 +1,12 @@
+import shutil
+
 import json
 import os
 import subprocess
 import time
 from ctypes import windll
 
+import cv2
 import numpy as np
 import win32con
 import win32gui
@@ -186,7 +189,7 @@ def read_pageJson(dictPage):
     :return: 页面模型列表
     """
     try:  # 存在该页面json文件
-        with open("page/" + dictPage['pageName'] + ".json", 'r', encoding='utf-8') as file:
+        with open("json/page/" + dictPage['pageName'] + ".json", 'r', encoding='utf-8') as file:
             data = json.load(file)
 
         listDataRoute = []  # 预设路径文本列表
@@ -280,7 +283,12 @@ def write_pageJson(modelPage):
     """
     data = modelPage.dict()  # 获取页面特征json
     data = json.dumps(data, indent=4, ensure_ascii=False)  # 确保中文不会转义
-    with open('page/' + modelPage.pageName + '.json', 'w', encoding='utf-8') as file:
+    dirpath = 'json/page'
+    if not os.path.exists(dirpath):
+        os.makedirs(dirpath)
+
+    file = dirpath + '/' + modelPage.pageName + '.json'
+    with open(file, 'w', encoding='utf-8') as file:
         file.write(data)   # 写入json文件
 
 
@@ -307,14 +315,14 @@ class UnknownPage(Exception):
     pass
 
 
-def delete_pagejson():
+def delete_json():
     """
     启动时若检测到屏幕分辨率或缩放因子与预设不同，则删除page文件夹内的预设
     """
-    path = 'page'
+    path = 'json'
     for filename in os.listdir(path):
         file_path = os.path.join(path, filename)
-        os.remove(file_path)
+        shutil.rmtree(file_path)
 
 
 def start_game():
@@ -327,18 +335,31 @@ def start_game():
     subprocess.Popen(data['gamepath'])
 
 
-def get_scale_factor():
+def set_dpi():
     """
     获取显示器的缩放系数
     :return: 缩放系数
     """
     try:
         windll.shcore.SetProcessDpiAwareness(1)  # 设置进程的 DPI 感知
-        scale_factor = windll.shcore.GetScaleFactorForDevice(0)  # 获取主显示器的缩放因子
-        return scale_factor / 100  # 返回百分比形式的缩放因子
     except Exception as e:
         print("Error:", e)
-        return None
+
+
+def write_imageJson(modelImage):
+    """
+    将图片模型写入json文件
+    :param modelImage: 图片模型
+    """
+    data = modelImage.dict()  # 获取页面特征json
+    data = json.dumps(data, indent=4, ensure_ascii=False)  # 确保中文不会转义
+    dirpath = 'json/image'
+    if not os.path.exists(dirpath):
+        os.makedirs(dirpath)
+
+    file = dirpath + '/' + modelImage.text + '.json'
+    with open(file, 'w', encoding='utf-8') as file:
+        file.write(data)  # 写入json文件
 
 
 class Page:
@@ -348,6 +369,9 @@ class Page:
 
     def __init__(self):
         # 声明
+        self.limitRecoTimes = 5  # 识别次数限制
+        self.limitRecoCD = 0.3  # 识别CD限制
+
         self.pageName = None  # 页面名称
         self.dictPages = get_dictPages()  # 获取页面字典
         self.route = []  # 路径界面名列表
@@ -356,7 +380,6 @@ class Page:
         self.windowPosition = None  # 窗口位置
 
         self.__refresh_setting()  # 初始化设置
-        get_scale_factor()  # 获取屏幕缩放因子
         self.control = Control(
             windowPosition=self.windowPosition
         )
@@ -452,10 +475,11 @@ class Page:
             Setting.screenWidth = screenWidth
             Setting.screenHeight = screenHeight
 
-            delete_pagejson()  # 删除page文件夹内的预设
+            delete_json()  # 删除page文件夹内的预设
 
         self.boolWindowBar = self.__has_title_bar()  # 窗口是否有标题栏
         self.windowPosition = self.get_window_position()  # 获取窗口位置
+        set_dpi()  # 忽略屏幕缩放系数
 
     def reco_page(self):
         """
@@ -466,6 +490,8 @@ class Page:
         listTextModel = ocr_textAll(img)
 
         signLoop0 = True  # 外循环信号
+        pageName = None
+        pos = None
         for modelPage in self.dictPages.values():
             if not signLoop0:  # 跳出外循环
                 break
@@ -499,7 +525,7 @@ class Page:
             return self.pageName
 
         except KeyError:
-            raise UnknownPage("未知页面")
+            return "未知界面"
 
     def confirm_page(self, pageName: str):
         """
@@ -579,10 +605,97 @@ class Page:
             route.reverse()  # 路径列表反转
             return route
 
+    def image_match(
+            self,
+            img: np.ndarray,
+            imgTemplate: np.ndarray,
+            area: PositionModel = PositionModel(
+                x1=0,
+                y1=0,
+                x2=Setting.screenWidth,
+                y2=Setting.screenHeight
+            )
+    ):
+        """
+        使用 opencv matchTemplate 方法在指定区域内进行模板匹配并返回匹配结果
+        :param img:  大图片
+        :param imgTemplate: 小图片
+        :param area: 区域模型
+        :return: ImgPosition 或 None
+        """
+        # 判断是否为灰度图，如果不是转换为灰度图
+        if len(img.shape) == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if len(imgTemplate.shape) == 3:
+            imgTemplate = cv2.cvtColor(imgTemplate, cv2.COLOR_BGR2GRAY)
+
+        img = img[area.y1:area.y2, area.x1:area.x2]
+        # 模板图片根据屏幕分辨率宽度进行缩放
+        ratio = Setting.screenWidth / 3840
+        imgTemplate = cv2.resize(imgTemplate, None, fx=ratio, fy=ratio, interpolation=cv2.INTER_AREA)
+
+        # 模板匹配
+        res = cv2.matchTemplate(img, imgTemplate, cv2.TM_CCOEFF_NORMED)
+        confidence = np.max(res)
+        if confidence < Setting.threshold:
+            return None
+        max_loc = np.where(res == confidence)
+
+        return PositionModel(
+            x1=area.x1 + max_loc[1][0],
+            y1=area.y1 + max_loc[0][0],
+            x2=area.x1 + max_loc[1][0] + imgTemplate.shape[1],
+            y2=area.y1 + max_loc[0][0] + imgTemplate.shape[0],
+        )
+
+    def reco_image(self, imageName):
+        """
+        :param imageName: 模板图片名
+        :return: 图片模型，包含图片名和位置模型
+        """
+        fileName = imageName + ".json"
+        if fileName in os.listdir("json/"):  # 如果已有模板图片预设文件则读取
+            with open("json/" + fileName, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+            return data
+
+        img = self.screenshot()
+        imageTemplate = cv2.imread(Setting.dictTemplatePath[imageName], 0)
+        pos = self.image_match(img, imageTemplate)
+        if pos:
+            model = TextModel(text=imageName, pos=pos)
+            write_imageJson(model)
+            return model
+
+        else:
+            return None
+
     def retrun_to_mainPage(self):
         """
         返回主页
         """
+        listTemplateName = ["返回主界面_黑", "返回主界面_白"]
+        for imageName in listTemplateName:
+            model = self.reco_image(imageName)
+            if model:
+                self.control.random_click(model.pos)
+                return
+
+    def confirm_loop(self, pageName: str, timeWait: float = 0):
+        """
+        循环确认界面
+        :param pageName: 目标界面名
+        :param timeWait: 等待动画时间
+        :return: 确认成功与否
+        """
+        time.sleep(timeWait)
+        for _ in range(self.limitRecoTimes):
+            if self.confirm_page(pageName):
+                return True  # 确认成功
+
+            time.sleep(self.limitRecoCD)
+
+        return False  # 确认失败
 
     def locate(self, pageName:str):
         """
@@ -596,9 +709,13 @@ class Page:
         if self.pageName in route:  # 当前界面是否在寻路路径中
             route = route[route.index(self.pageName):]  # 从当前界面开始截取寻路路径
 
-        else:
+        else:  # 不在寻路路径中，返回主界面
             self.retrun_to_mainPage()
+            signConfirm = self.confirm_loop('主界面')
+            if not signConfirm:
+                return self.locate(pageName)
 
+        # 切换界面
         for index, routePageName in enumerate(route):
             if index + 1 >= len(route):  # 判断是否为最后一个界面
                 break
@@ -610,11 +727,19 @@ class Page:
                     pos = modelPageRoute.modelDirectText.pos
                     break
 
-            self.control.random_click(pos)
-            while not self.confirm_page(route[index + 1]):
-                time.sleep(0.3)
+            if not pos:
+                return self.locate(pageName)
+
+            while True:
+                if self.confirm_page(routePageName):
+                    self.control.random_click(pos)
+
+                if self.confirm_loop(route[index + 1]):
+                    break
+                else:
+                    return self.locate(pageName)
 
 
 if __name__ == "__main__":
     page = Page()
-    page.locate("实兵演习")
+    page.locate('班组补给')

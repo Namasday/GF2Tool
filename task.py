@@ -1,22 +1,18 @@
 import time
 
 from constants import Setting
-from page import ShiBingYanXi
-from utils import locate, control, text_match, battle
+from json import Page
+from utils import battle
 
 class Task:
-    def done(self, time=5):
-        """
-        任务完成，等待时间响应
-        :param time: 等待时间
-        """
-        time.sleep(time)
+    def __init__(self):
+        self.page = Page()
 
     def banzu_yaowu(self):
         """
         战斗：要务done
         """
-        locate("班组要务")
+        self.page.locate("班组要务")
         time.sleep(1)
         box = text_match("开始作战")
         if box:

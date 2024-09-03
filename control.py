@@ -23,10 +23,7 @@ class Control:
         time.sleep(0.1)
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0)
 
-    def random_click(
-            self,
-            pos: PositionModel
-    ):
+    def random_click(self, pos: PositionModel):
         """
         pos模型区域内随机点击
         :param pos: 目标框
@@ -46,27 +43,3 @@ class Control:
             y2=Setting.screenHeight,
         )
         self.random_click(pos)
-
-    def click_image(self, text: str):
-        """
-        点击图片区域
-        :param text: 图片名
-        :return: 点击成功与否的布尔值
-        """
-        # 截图
-        img = screenshot()
-
-        # 导入主页模板图片并创建列表
-        template = cv2.imread(Setting.dictTemplate[text], 0)
-
-        # 转换为cv2图像
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-
-        position = image_match(img, template)  # 使用模板匹配
-
-        if position:
-            center = calculate_boxCenter(position)
-            control.random_click(center[0], center[1])
-            return True
-        else:
-            return False
