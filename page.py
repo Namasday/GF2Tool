@@ -179,6 +179,16 @@ listDictPages = [
         "pageName": "伤害统计",
         "modelSpecialText": {"text": "伤害统计"},
         "route": []
+    },
+    {
+        "pageName": "进攻选择",
+        "modelSpecialText": {"text": "刷新"},
+        "route": []
+    },
+    {
+        "pageName": "基础防守演习",
+        "modelSpecialText": {"text": "基础防守演习"},
+        "route": []
     }
 ]
 
@@ -693,16 +703,13 @@ class Page:
             if not listTextModels:  # 未识别出文本
                 return False
 
-            if len(listTextModels) == 1:  # 确保只检测出一个结果
-                if textMatch(text=textSpecial, modelText=listTextModels[0]):
-                    self.pageName = pageName
-                    return True
-
-                else:
-                    return False
-
             else:
-                raise OCRResultError("OCR识别结果过多")
+                for modelText in listTextModels:
+                    if textMatch(text=textSpecial, modelText=modelText):
+                        self.pageName = pageName
+                        return True
+
+                return False
 
     def __find_path_loop(self, pageName: str):
         """
@@ -989,17 +996,19 @@ class TaskPage(Page):
         self.click_text('确认')
 
 
-listTask = []
+dictTaskCls = {}
 
 
 def init_task(cls):
-    listTask.append(cls)
+    dictTaskCls[cls.taskName] = cls
     return cls
 
 
+@init_task
 class BanZuBuji(TaskPage):
+    taskName = "班组补给"
+
     def __init__(self):
-        self.taskName = '班组补给'
         super().__init__(self.taskName)
 
     def run(self):
@@ -1017,9 +1026,11 @@ class BanZuBuji(TaskPage):
             self.control.click_blank()
 
 
+@init_task
 class PaiQian(TaskPage):
+    taskName = "派遣"
+
     def __init__(self):
-        self.taskName = '派遣'
         super().__init__(self.taskName)
 
     def run(self):
@@ -1033,9 +1044,11 @@ class PaiQian(TaskPage):
             time.sleep(2)
 
 
+@init_task
 class QingBaoCuBei(TaskPage):
+    taskName = "情报储备"
+
     def __init__(self):
-        self.taskName = '情报储备'
         super().__init__(self.taskName)
 
 
@@ -1054,8 +1067,9 @@ class ZiYuanShengChan(TaskPage):
     """
     资源生产done
     """
+    taskName = "资源生产"
+
     def __init__(self):
-        self.taskName = '资源生产'
         super().__init__(self.taskName)
 
     def run(self):
@@ -1068,9 +1082,11 @@ class ZiYuanShengChan(TaskPage):
             time.sleep(1)
 
 
+@init_task
 class BanZuYaoWu(TaskPage):
+    taskName = "班组要务"
+
     def __init__(self):
-        self.taskName = '班组要务'
         super().__init__(self.taskName)
 
     def close(self):
@@ -1091,12 +1107,75 @@ class BanZuYaoWu(TaskPage):
         self.wait_page('班组要务')
         self.close()
 
-class ShiBingYanXi(TaskPage):
-    def __init__(self):
-        self.taskName = '实兵演习'
-        super().__init__(self.taskName)
 
-        self.timesRefresh = 0
+class PlayerModel(BaseModel):
+    index: int = Field(..., title="序号")
+    capability: int = Field(..., title="战力")
+    state: bool = Field(..., title="可否挑战")
+    pos: PositionModel = Field(..., title="位置")
+
+    def __str__(self):
+        return f"玩家{self.index}战力:{self.capability}, 挑战状态:{self.state}"
+
+class PlayerPanel:
+    """
+    实兵演习进攻选择敌人面板
+    """
+    def __init__(self, index):
+        ratio = Setting.screenWidth / 3840
+        self.width = int(540 * ratio)  # 面板宽度
+        self.height = int(220 * ratio)  # 面板高度
+        self.spacing = int(54 * ratio)  # 面板间距
+        midline = int(1923 * ratio)  # 游戏横向中间线
+        midHeight = int(1127 * ratio)  # 游戏竖向中间线
+        index = index - 3
+        self.pos = PositionModel(
+            x1=midline - int(self.width/2) + self.width * index + self.spacing * index,
+            y1=midHeight - int(self.height/2),
+            x2=midline - int(self.width/2) + self.width * index + self.spacing * index + self.width,
+            y2=midHeight - int(self.height/2) + self.height
+        )
+
+
+@init_task
+class ShiBingYanXi(TaskPage):
+    taskName = "实兵演习"
+
+    def __init__(self):
+        super().__init__(self.taskName)
+        self.dictPlayer = {}
+        self.modelTextAttack = self.read_taskJson_attack()
+
+    def read_taskJson_attack(self):
+        """
+        读取进攻界面json文件
+        """
+        modelText = None
+        try:
+            with open("json/task/演习进攻.json", 'r', encoding='utf-8') as file:
+                modelText = json.load(file)
+
+            modelText = TextModel(**modelText)
+
+        except FileNotFoundError:
+            pass
+
+        finally:
+            return modelText
+
+    def write_taskJson_attack(self):
+        """
+        写入进攻界面json文件
+        """
+        data = self.modelTextAttack.dict()
+        data = json.dumps(data, indent=4, ensure_ascii=False)  # 确保中文不会转义
+        dirpath = 'json/task'
+        if not os.path.exists(dirpath):
+            os.makedirs(dirpath)
+
+        file = dirpath + "/演习进攻.json"
+        with open(file, 'w', encoding='utf-8') as file:
+            file.write(data)  # 写入json文件
 
     def check_battletimes(self):
         """
@@ -1136,17 +1215,114 @@ class ShiBingYanXi(TaskPage):
         listTextModel = ocr_crop(img, pos)
         return int(listTextModel[0].text[-3])
 
+    def reco_player(self):
+        """
+        识别玩家信息
+        :return: 玩家模型字典
+        """
+        img = self.screenshot()
+        dictPlayers = {}
+        for index in range(1, 6):  # 5个玩家面板
+            player = PlayerPanel(index=index)
+
+            listTextModel = ocr_crop(img, player.pos)
+            state = True
+            capability = 0
+            for modelText in listTextModel:
+                try:
+                    capability = int(modelText.text)
+
+                except ValueError:
+                    if textmatch_whole("挑战成功", modelText):  # 识别出挑战成功
+                        state = False
+
+            dictPlayers[index] = PlayerModel(
+                index=index,
+                capability=capability,
+                state=state,
+                pos=player.pos
+            )
+
+        return dictPlayers
+
+    def close_select(self):
+        """
+        关闭选择界面
+        """
+        self.click_image("关闭进攻选择")
+        self.wait_page("实兵演习")
+
+    def attack(self):
+        """
+        进攻
+        """
+        time.sleep(2)
+
+        timesBattle = self.check_battletimes()
+        if timesBattle == 0:  # 剩余战斗次数为0
+            return
+
+        self.dictPlayer = self.reco_player()
+        for index in range(1, Setting.limitRank + 1):  # 限制排名
+            modelPlayer = self.dictPlayer[index]
+            if modelPlayer.state and modelPlayer.capability <= Setting.limitCapacity:  # 未挑战且战力小于等于限制
+                self.control.random_click(modelPlayer.pos)
+
+                self.wait_page("基础防守演习")
+                if not self.modelTextAttack:
+                    img = self.screenshot()
+                    listTextModel = ocr_textAll(img)
+
+                    for modelText in listTextModel:
+                        if textmatch_whole("进攻", modelText):
+                            self.modelTextAttack = modelText
+                            self.write_taskJson_attack()  # 写入进攻界面json文件
+                            break
+
+                self.control.random_click(self.modelTextAttack.pos)
+                self.battle()
+                self.wait_page("进攻选择")
+
+        timesBattle = self.check_battletimes()
+        if timesBattle == 0:
+            logger(f"{self.taskName} 已完成")
+            return
+
+        timesRefresh = self.check_refreshtimes()
+        if timesRefresh == 0:  # 刷新次数为0
+            logger(f"刷新次数不足，任务{self.taskName}推迟1小时")
+            return
+
+        else:  # 仍有刷新次数
+            self.click_text("刷新")
+            return self.attack()
+
+    def reward(self):
+        """
+        领取奖励
+        """
+        sign = self.click_image("收获_演习")
+        if not sign:  # 奖励已领取
+            return
+
+        sign = self.confirm_loop('获得道具')
+        if sign:
+            self.control.click_blank()
+
     def run(self):
         self.locate('实兵演习')
 
         timesBattle = self.check_battletimes()
         if timesBattle == 0:
             logger(f"{self.taskName} 已完成")
+            return self.reward()
 
-        else:
-            self.click_text("进攻")
+        self.click_text("进攻")
+        self.attack()
+        self.close_select()
+        self.reward()
 
 
 if __name__ == "__main__":
     page = ShiBingYanXi()
-    print(page.check_refreshtimes())
+    page.reward()

@@ -1,7 +1,8 @@
 {
   "gamepath": "D:/Program Files/GF2Exilium/GF2 Game/GF2_Exilium.exe",
   "timeslimitBattle": 3,
-  "fightingCapacity": 5000,
+  "limitCapacity": 5000,
+  "limitRank": 2,
   "screenWidth": 3840,
   "screenHeight": 2160,
   "scaleFactor": 2.0
