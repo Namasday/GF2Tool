@@ -1,5 +1,7 @@
 import shutil
 
+from PIL import Image
+
 import json
 import os
 import subprocess
@@ -146,6 +148,23 @@ listDictPages = [
         "modelSpecialText": {"text": "每小时产量"},
         "route": []
     },
+
+    # 特殊
+    {
+        "pageName": "获得道具",
+        "modelSpecialText": {"text": "点击空白处关闭"},
+        "route": []
+    },
+    {
+        "pageName": "加载",
+        "modelSpecialText": {"text": "资源加载中"},
+        "route": []
+    },
+    {
+        "pageName": "作战准备",
+        "modelSpecialText": {"text": "作战开始"},
+        "route": []
+    },
 ]
 
 
@@ -259,6 +278,21 @@ def ocr_textAll(image):
     return listTextModel
 
 
+def ocr_textCrop(image, text: str):
+    """
+    嵌入文字识别
+    :param image: 图像
+    :param text: 目标文字
+    :return: 识别结果列表
+    """
+    listTextModel = ocr_textAll(image)
+    for modelText in listTextModel:
+        if text in modelText.text:  # 识别结果在记录列表中
+            return [modelText]
+
+    return None
+
+
 def ocr_crop(image, modelText: TextModel):
     """
     裁剪图像识别文字
@@ -267,14 +301,28 @@ def ocr_crop(image, modelText: TextModel):
     :return: 识别结果
     """
     pos = modelText.pos
-    posEnlarged = PositionModel(
-        x1=pos.x1 - Setting.enlarge,
-        y1=pos.y1 - Setting.enlarge,
-        x2=pos.x2 + Setting.enlarge,
-        y2=pos.y2 + Setting.enlarge
-    )
-    imageCrop = image[posEnlarged.y1:posEnlarged.y2, posEnlarged.x1:posEnlarged.x2]
-    return ocr_textAll(imageCrop)
+    imageCrop = image[pos.y1:pos.y2, pos.x1:pos.x2]
+    listTextModel = ocr_textCrop(imageCrop, modelText.text)  # 嵌入式文字识别
+    if not listTextModel:  # 检测不到文字
+        return None
+
+    # 对识别结果的位置进行修正
+    listReturnTextModel = []
+    for modelText in listTextModel:
+        text = modelText.text
+        position = PositionModel(
+            x1=modelText.pos.x1 + pos.x1,
+            y1=modelText.pos.y1 + pos.y1,
+            x2=modelText.pos.x2 + pos.x1,
+            y2=modelText.pos.y2 + pos.y1
+        )
+        model = TextModel(
+            text=text,
+            pos=position
+        )
+        listReturnTextModel.append(model)
+
+    return listReturnTextModel
 
 
 def write_pageJson(modelPage):
@@ -731,6 +779,7 @@ class Page:
         while True:  # 仍处于当前界面
             if self.confirm_page(pageNow):  # 确认界面
                 self.control.random_click(pos)
+                time.sleep(self.limitRecoCD)
 
             if self.confirm_page(pageNext):  # 确认界面
                 return
@@ -764,31 +813,52 @@ class Page:
 
             self.change(route[index], route[index + 1])
 
+    def wait_page(self, pageName: str):
+        """
+        无限循环等待目标界面出现
+        :param pageName:
+        """
+        while True:
+            if self.confirm_page(pageName):  # 确认界面
+                return
+
+            time.sleep(1)
+
 
 class TaskPage(Page):
     def __init__(self, taskName):
         super().__init__()
         self.taskName = taskName
+        self.listTextModel = []  # 文本模型列表
+        self.dictText = self.read_taskJson()
 
-        self.dictText = {}  # 键为文本，值为位置模型
+    def read_taskJson(self):
+        """
+        读取任务界面json文件
+        """
+        dictText = {}
         try:
             with open("json/task/" + self.taskName + ".json", 'r', encoding='utf-8') as file:
-                self.listTextModel = json.load(file)
+                listTextModel = json.load(file)
 
-            for modelText in self.listTextModel:
-                self.dictText[modelText.text] = modelText.pos
+            for modelText in listTextModel:
+                modelText = TextModel(**modelText)
+                dictText[modelText.text] = modelText.pos
 
         except FileNotFoundError:
             pass
+
+        finally:
+            return dictText
 
     def write_taskJson(self):
         """
         写入任务界面json文件
         """
+        # 将列表里的文本模型解成字典并传入jsonTextModels列表
         jsonTextModels = []
         for modelText in self.listTextModel:
-            data = modelText.dict()  # 获取页面特征json
-            data = json.dumps(data, indent=4, ensure_ascii=False)  # 确保中文不会转义
+            data = modelText.dict()
             jsonTextModels.append(data)
 
         dirpath = 'json/task'
@@ -799,9 +869,17 @@ class TaskPage(Page):
         with open(file, 'w', encoding='utf-8') as f:
             json.dump(jsonTextModels, f, indent=4, ensure_ascii=False)  # 写入json文件
 
-    def click_text(self, text: str):
+    def click_text(self, text: str) -> bool:
+        """
+        点击文本
+        :param text: 目标文本
+        """
+        img = self.screenshot()
+        listTextModel = []
         try:
             pos = self.dictText[text]
+            model = TextModel(text=text, pos=pos)
+            listTextModel = ocr_crop(img, model)
 
         except KeyError:
             img = self.screenshot()
@@ -810,13 +888,35 @@ class TaskPage(Page):
             for modelText in listTextModel:
                 if modelText.text == text:
                     self.dictText[modelText.text] = modelText.pos
-                    pos = modelText.pos
+                    self.listTextModel.append(modelText)
                     break
 
             self.write_taskJson()
 
         finally:
-            pass
+            if not listTextModel:
+                logger(f"未找到文本：{text}")
+                return False
+
+            elif len(listTextModel) == 1:
+                self.control.random_click(listTextModel[0].pos)
+                return True
+
+    def battle(self):
+        """
+        战斗
+        """
+        self.wait_page('作战准备')
+        model = self.dictPages['作战准备']
+        self.control.random_click(model.modelSpecialText.pos)
+
+
+listTask = []
+
+
+def init_task(cls):
+    listTask.append(cls)
+    return cls
 
 
 class BanZuBuji(TaskPage):
@@ -830,9 +930,80 @@ class BanZuBuji(TaskPage):
         :return:
         """
         self.locate('班组补给')
-        self.click_text('一键领取')
+        sign = self.click_text('领取全部')
+        if not sign:  # 未找到领取全部
+            return
+
+        sign = self.confirm_loop('获得道具')
+        if sign:
+            self.control.click_blank()
+
+
+class PaiQian(TaskPage):
+    def __init__(self):
+        self.taskName = '派遣'
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('调度室')
+        sign = self.click_text('一键领取')
+        if not sign:  # 未找到一键领取
+            return
+
+        sign = self.click_text('再次派遣')
+        if sign:
+            time.sleep(2)
+
+
+class QingBaoCuBei(TaskPage):
+    def __init__(self):
+        self.taskName = '情报储备'
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('情报储备')
+        time.sleep(1)
+        self.click_text('最大')
+        time.sleep(1)
+        sign = self.click_text('取出')
+        if sign:
+            time.sleep(2)
+
+
+@init_task
+class ZiYuanShengChan(TaskPage):
+    """
+    资源生产done
+    """
+    def __init__(self):
+        self.taskName = '资源生产'
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('资源生产')
+        self.click_text('收取')
+
+        sign = self.confirm_loop('获得道具')
+        if sign:
+            self.control.click_blank()
+            time.sleep(1)
+
+
+class BanZuYaoWu(TaskPage):
+    def __init__(self):
+        self.taskName = '班组要务'
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('班组要务')
+        sign = self.click_text('开始作战')
+        if not sign:
+            logger(f"{self.taskName} 已完成")
+            return
+
+        self.battle()
 
 
 if __name__ == "__main__":
-    page = Page()
-    page.locate('实兵演习')
+    page = BanZuYaoWu()
+    page.run()
