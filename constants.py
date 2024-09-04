@@ -33,7 +33,7 @@ class Setting:
         "返回主界面_黑": "template/return_black.png",
         "返回主界面_白": "template/return_white.png",
         "自动战斗": "template/autobattle.png",
-        "自动战斗中": "template/autobattlein.png"
+        "关闭要务": "template/close_yaowu.png"
     }  # 模板图片指针
 
     # 读取预设文件
