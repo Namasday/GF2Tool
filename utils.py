@@ -1,13 +1,5 @@
-import json
-import subprocess
 import time
-from dataclasses import dataclass
-
-import cv2
-import numpy as np
 from pydantic import BaseModel, Field
-
-from constants import Setting
 
 from rapidocr_openvino import RapidOCR
 ocr = RapidOCR(
@@ -27,12 +19,6 @@ class PositionModel(BaseModel):
 
     def __str__(self):
         return f"({self.x1}, {self.y1}, {self.x2}, {self.y2})"
-
-
-@dataclass
-class CropImage:
-    image: np.ndarray = None
-    position: tuple = (0, 0)
 
 
 def timer(func):
@@ -56,70 +42,3 @@ def timer(func):
 def logger(text):
     print(text)
 
-
-def battle():
-    """
-    战斗函数
-    """
-    boolAutoBattle = False  # 自动战斗状态
-    boolBattle = False  # 战斗状态
-    now = time.time()
-    while True:
-        if time.time() - now > 60:  # 60秒后超时
-            return "作战超时"
-
-        pageNow = reco_page()
-
-        if pageNow in "加载":
-            time.sleep(1)
-            now = time.time()
-
-        elif pageNow == "未知界面":
-            if boolBattle and not boolAutoBattle:  # 战斗开始但未进入自动战斗
-                box = reco_image("自动战斗")
-                if box:
-                    control.click_box(box)
-                    boolAutoBattle = True
-                    now = time.time()
-
-            elif boolBattle and boolAutoBattle:  # 自动战斗中
-                time.sleep(1)
-                now = time.time()
-
-        elif pageNow == "作战准备":
-            control.click_text("作战开始")
-            boolBattle = True
-            now = time.time()
-
-        elif pageNow == "晋升":
-            control.click_blank()
-            time.sleep(2)
-
-        elif pageNow == "伤害统计":
-            control.click_text("确认")
-
-            # 战斗结束等待返回UI界面
-            time.sleep(5)
-            return "战斗结束"
-
-        elif pageNow == "任务完成":
-            boolBattle = False
-            control.click_blank()
-            time.sleep(2)
-
-
-def login():
-    while True:
-        pageNow = reco_page()
-        print(pageNow)
-        if pageNow == "主界面":
-            return "登录成功"
-
-        if pageNow in ["登录", "收获"]:
-            control.click_blank()
-            time.sleep(1)
-            continue
-
-        if pageNow in ["加载", "未知界面", "无文本界面"]:
-            time.sleep(1)
-            continue

@@ -321,14 +321,13 @@ def textmatch_part(text: str, modelText: TextModel) -> bool:
         return False
 
 
-def ocr_crop(image, modelText: TextModel):
+def ocr_crop(image, pos: PositionModel):
     """
     裁剪图像识别文字
     :param image: 原图像，用以裁剪
-    :param modelText: 文字模型
+    :param pos: 位置模型
     :return: 识别结果
     """
-    pos = modelText.pos
     imageCrop = image[pos.y1:pos.y2, pos.x1:pos.x2]
     listTextModel = ocr_textAll(imageCrop)
     if not listTextModel:  # 检测不到文字
@@ -608,16 +607,17 @@ class Page:
         self.boolWindowBar = self.__has_title_bar()  # 窗口是否有标题栏
         self.windowPosition = self.get_window_position()  # 获取窗口位置
 
-    def reco_page(self, type: str = "whole"):
+    def reco_page(self, typeMatch: str = "whole"):
         """
         识别当前页面
+        :param typeMatch: 识别类型（完全匹配whole或部分匹配part）
         :return: 页面名
         """
         textmatch = None
-        if type == "whole":  # 识别整个界面
+        if typeMatch == "whole":  # 完全匹配
             textmatch = textmatch_whole
 
-        if type == "part":  # 识别部分界面
+        if typeMatch == "part":  # 部分匹配
             textmatch = textmatch_part
 
         img = self.screenshot()
@@ -670,24 +670,31 @@ class Page:
         :param pageName: 页面名
         :return: 切换成功与否
         """
+        listSpecialPage = ["战斗中"]
+        typeMatch = "whole"
+        textMatch = textmatch_whole
+        if pageName in listSpecialPage:  # 特殊页面
+            typeMatch = "part"
+            textMatch = textmatch_part
+
         model = self.dictPages[pageName]
         signRecordPos = get_signRecordPos(model)
         if signRecordPos:  # 目标页面特征位置需要记录
-            pageNameReco = self.reco_page()
+            pageNameReco = self.reco_page(typeMatch)
             if pageNameReco == pageName:
                 return True
             else:
                 return False
 
         else:
-            key = model.modelSpecialText.text
+            textSpecial = model.modelSpecialText.text
             img = self.screenshot()
-            listTextModels = ocr_crop(img, model.modelSpecialText)
+            listTextModels = ocr_crop(img, model.modelSpecialText.pos)
             if not listTextModels:  # 未识别出文本
                 return False
 
             if len(listTextModels) == 1:  # 确保只检测出一个结果
-                if listTextModels[0].text == key:
+                if textMatch(text=textSpecial, modelText=listTextModels[0]):
                     self.pageName = pageName
                     return True
 
@@ -695,7 +702,7 @@ class Page:
                     return False
 
             else:
-                raise OCRResultError("OCR识别文本个数过多")
+                raise OCRResultError("OCR识别结果过多")
 
     def __find_path_loop(self, pageName: str):
         """
@@ -924,13 +931,19 @@ class TaskPage(Page):
         """
         点击文本
         :param text: 目标文本
+        :return: 点击成功返回True，失败返回False
         """
         img = self.screenshot()
-        listTextModel = []
+        check = False  # 检测是否具有文本
         try:
             pos = self.dictText[text]
             model = TextModel(text=text, pos=pos)
-            listTextModel = ocr_crop(img, model)
+            listTextModel = ocr_crop(img, model.pos)
+            if listTextModel and textmatch_whole(text, listTextModel[0]):
+                check = True
+
+            else:
+                return False
 
         except KeyError:
             img = self.screenshot()
@@ -940,17 +953,15 @@ class TaskPage(Page):
                 if textmatch_whole(text, modelText):
                     self.dictText[modelText.text] = modelText.pos
                     self.listTextModel.append(modelText)
+                    check = True
                     break
 
-            self.write_taskJson()
+            if check:  # 全新检测到目标文本
+                self.write_taskJson()
 
         finally:
-            if not listTextModel:
-                logger(f"未找到文本：{text}")
-                return False
-
-            elif len(listTextModel) == 1 and listTextModel[0].text == text:
-                self.control.random_click(listTextModel[0].pos)
+            if check:
+                self.control.random_click(self.dictText[text])
                 return True
 
     def auto_battle(self):
@@ -1082,13 +1093,60 @@ class BanZuYaoWu(TaskPage):
 
 class ShiBingYanXi(TaskPage):
     def __init__(self):
-        self.taskName = '班组要务'
+        self.taskName = '实兵演习'
         super().__init__(self.taskName)
 
+        self.timesRefresh = 0
+
+    def check_battletimes(self):
+        """
+        识别剩余战斗次数
+        :return:
+        """
+        img = self.screenshot()
+
+        # 截取战斗次数区域
+        region = (0.95, 0.03, 0.98, 0.06)
+        pos = PositionModel(
+            x1=int(Setting.screenWidth * region[0]),
+            y1=int(Setting.screenHeight * region[1]),
+            x2=int(Setting.screenWidth * region[2]),
+            y2=int(Setting.screenHeight * region[3])
+        )
+
+        listTextModel = ocr_crop(img, pos)
+        return int(listTextModel[0].text[0])
+
+    def check_refreshtimes(self):
+        """
+        识别刷新次数
+        :return: 刷新次数
+        """
+        img = self.screenshot()
+
+        # 截取刷新次数区域
+        region = (0.83, 0.93, 0.89, 0.96)
+        pos = PositionModel(
+            x1=int(Setting.screenWidth * region[0]),
+            y1=int(Setting.screenHeight * region[1]),
+            x2=int(Setting.screenWidth * region[2]),
+            y2=int(Setting.screenHeight * region[3])
+        )
+
+        listTextModel = ocr_crop(img, pos)
+        return int(listTextModel[0].text[-3])
+
     def run(self):
-        self.locate('班组要务')
+        self.locate('实兵演习')
+
+        timesBattle = self.check_battletimes()
+        if timesBattle == 0:
+            logger(f"{self.taskName} 已完成")
+
+        else:
+            self.click_text("进攻")
 
 
 if __name__ == "__main__":
-    page = BanZuYaoWu()
-    page.run()
+    page = ShiBingYanXi()
+    print(page.check_refreshtimes())
