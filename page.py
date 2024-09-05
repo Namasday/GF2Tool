@@ -37,8 +37,53 @@ listDictPages = [
             {
                 "pageName": "公共区",
                 "modelDirectText": {"text": "公共区"},
+            },
+            {
+                "pageName": "委托",
+                "modelDirectText": {"text": "委托"},
+            },
+            {
+                "pageName": "新品上架",
+                "modelDirectText": {"text": "商城"},
+            },
+            {
+                "pageName": "限时开启",
+                "modelDirectText": {"text": "限时开启"},
+            },
+        ]
+    },
+
+    # 活动分支
+    {
+        "pageName": "限时开启",
+        "modelSpecialText": {"text": "定期参与活动可获得丰厚报酬"},
+        "route": [
+            {
+                "pageName": "远日点",
+                "modelDirectText": {"text": "远日点"}
             }
         ]
+    },
+
+    # 活动页
+    {
+        "pageName": "远日点",
+        "modelSpecialText": {"text": "当光明远离"},
+        "route": []
+    },
+
+    # 商城分支
+    {
+        "pageName": "新品上架",
+        "modelSpecialText": {"text": "新品热卖"},
+        "route": []
+    },
+
+    # 委托分支
+    {
+        "pageName": "委托",
+        "modelSpecialText": {"text": "日活跃度报酬"},
+        "route": []
     },
 
     # 剧情战役分支
@@ -49,6 +94,10 @@ listDictPages = [
             {
                 "pageName": "模拟作战",
                 "modelDirectText": {"text": "模拟作战"}
+            },
+            {
+                "pageName": "补给作战",
+                "modelDirectText": {"text": "补给作战"}
             }
         ]
     },
@@ -57,8 +106,38 @@ listDictPages = [
         "modelSpecialText": {"text": "心智勘测"},
         "route": [
             {
+                "pageName": "补给作战",
+                "modelDirectText": {"text": "补给作战"}
+            },
+            {
                 "pageName": "实兵演习",
                 "modelDirectText": {"text": "实兵演习"}
+            }
+        ]
+    },
+    {
+        "pageName": "补给作战",
+        "modelSpecialText": {"text": "获取战场报告奖励"},
+        "route": [
+            {
+                "pageName": "深度搜索",
+                "modelDirectText": {"text": "深度搜索"}
+            },
+            {
+                "pageName": "军备解析",
+                "modelDirectText": {"text": "军备解析"}
+            },
+            {
+                "pageName": "决策构象",
+                "modelDirectText": {"text": "决策构象"}
+            },
+            {
+                "pageName": "定向精研",
+                "modelDirectText": {"text": "定向精研"}
+            },
+            {
+                "pageName": "标准同调",
+                "modelDirectText": {"text": "标准同调"}
             }
         ]
     },
@@ -168,11 +247,13 @@ listDictPages = [
     {
         "pageName": "作战中",
         "modelSpecialText": {"text": "回合"},
+        "typeMatch": "part",
         "route": []
     },
     {
         "pageName": "任务完成",
         "modelSpecialText": {"text": "指挥官等级"},
+        "typeMatch": "part",
         "route": []
     },
     {
@@ -189,6 +270,17 @@ listDictPages = [
         "pageName": "基础防守演习",
         "modelSpecialText": {"text": "基础防守演习"},
         "route": []
+    },
+    {
+        "pageName": "派遣完成",
+        "modelSpecialText": {"text": "派遣完成"},
+        "route": []
+    },
+    {
+        "pageName": "晋升",
+        "modelSpecialText": {"text": "您已晋升"},
+        "typeMatch": "part",
+        "route": []
     }
 ]
 
@@ -201,7 +293,7 @@ class TextModel(BaseModel):
     pos: PositionModel = Field(None, title="文本位置模型")
 
     def __str__(self):
-        return f"文本：{self.text}, 位置：{self.modelPos}"
+        return f"文本：{self.text}, 位置：{self.pos}"
 
 
 class PageRouteModel(BaseModel):
@@ -221,6 +313,7 @@ class PageModel(BaseModel):
     """
     pageName: str = Field("", title="页面名称")
     modelSpecialText: TextModel = Field(None, title="特征文本模型")
+    typeMatch: str = Field("whole", title="OCR识别类型")
     route: list[PageRouteModel] = Field([], title="次级界面路径模型列表")
 
     def __str__(self):
@@ -504,6 +597,7 @@ class Page:
         # 声明
         self.limitRecoTimes = 5  # 识别次数限制
         self.limitRecoCD = 0.3  # 识别CD限制
+        self.limitClickCD = 0.3  # 点击CD限制
 
         self.pageName = None  # 页面名称
         self.dictPages = get_dictPages()  # 获取页面字典
@@ -633,6 +727,9 @@ class Page:
         img = self.screenshot()
         listTextModel = ocr_textAll(img)
 
+        if not listTextModel:  # 未识别到文本
+            return self.reco_page(typeMatch=typeMatch)
+
         signLoop0 = True  # 外循环信号
         pageName = None
         pos = None
@@ -680,11 +777,10 @@ class Page:
         :param pageName: 页面名
         :return: 切换成功与否
         """
-        listSpecialPage = ["战斗中"]
-        typeMatch = "whole"
-        textMatch = textmatch_whole
-        if pageName in listSpecialPage:  # 特殊页面
-            typeMatch = "part"
+        typeMatch = self.dictPages[pageName].typeMatch
+        if typeMatch == "whole":  # 完全匹配
+            textMatch = textmatch_whole
+        else:  # 部分匹配
             textMatch = textmatch_part
 
         model = self.dictPages[pageName]
@@ -801,18 +897,17 @@ class Page:
         for imageName in listTemplateName:
             sign = self.click_image(imageName)
             if sign:
+                self.wait_page(pageName="主界面")
                 return
 
         raise UnknownPage("无法返回主界面")
 
-    def confirm_loop(self, pageName: str, timeWait: float = 0):
+    def confirm_loop(self, pageName: str):
         """
         循环确认界面
         :param pageName: 目标界面名
-        :param timeWait: 等待动画时间
         :return: 确认成功与否
         """
-        time.sleep(timeWait)
         for _ in range(self.limitRecoTimes):
             if self.confirm_page(pageName):
                 return True  # 确认成功
@@ -844,7 +939,7 @@ class Page:
         while True:  # 仍处于当前界面
             if self.confirm_page(pageNow):  # 确认界面
                 self.control.random_click(pos)
-                time.sleep(self.limitRecoCD)
+                time.sleep(self.limitClickCD)
 
             if self.confirm_page(pageNext):  # 确认界面
                 return
@@ -887,7 +982,16 @@ class Page:
             if self.confirm_page(pageName):  # 确认界面
                 return
 
-            time.sleep(1)
+    def confirm_click_change(self, pageName: str, func, **kwargs):
+        """
+        循环确认界面已切换，未切换则重复之前的点击
+        :param pageName: 切换后的界面名
+        :param func: 切换操作函数
+        :param kwargs: 切换操作函数的参数
+        """
+        while not self.confirm_page(pageName):  # 确认界面
+            func(**kwargs)
+            time.sleep(self.limitClickCD)
 
 
 class TaskPage(Page):
@@ -978,7 +1082,7 @@ class TaskPage(Page):
         templateName = "自动战斗"
         self.click_image(templateName)
 
-    def battle(self):
+    def battle(self, typeBattle: str = "default"):
         """
         战斗
         """
@@ -990,9 +1094,12 @@ class TaskPage(Page):
         self.auto_battle()
 
         self.wait_page('任务完成')
-        self.control.click_blank()
 
-        self.wait_page('伤害统计')
+        self.confirm_click_change(
+            pageName="伤害统计",
+            func=self.control.click_blank
+        )
+
         self.click_text('确认')
 
 
@@ -1014,7 +1121,6 @@ class BanZuBuji(TaskPage):
     def run(self):
         """
         收获
-        :return:
         """
         self.locate('班组补给')
         sign = self.click_text('领取全部')
@@ -1023,11 +1129,14 @@ class BanZuBuji(TaskPage):
 
         sign = self.confirm_loop('获得道具')
         if sign:
-            self.control.click_blank()
+            self.confirm_click_change(
+                pageName="班组补给",
+                func=self.control.click_blank
+            )
 
 
 @init_task
-class PaiQian(TaskPage):
+class PaiQian(TaskPage):  # done
     taskName = "派遣"
 
     def __init__(self):
@@ -1037,20 +1146,21 @@ class PaiQian(TaskPage):
         self.locate('调度室')
         sign = self.click_text('一键领取')
         if not sign:  # 未找到一键领取
+            logger("已完成或未到收获时间")
             return
 
+        self.wait_page("派遣完成")
         sign = self.click_text('再次派遣')
         if sign:
-            time.sleep(2)
+            self.wait_page("调度室")
 
 
 @init_task
-class QingBaoCuBei(TaskPage):
+class QingBaoCuBei(TaskPage):  # done
     taskName = "情报储备"
 
     def __init__(self):
         super().__init__(self.taskName)
-
 
     def run(self):
         self.locate('情报储备')
@@ -1063,7 +1173,7 @@ class QingBaoCuBei(TaskPage):
 
 
 @init_task
-class ZiYuanShengChan(TaskPage):
+class ZiYuanShengChan(TaskPage):  # done
     """
     资源生产done
     """
@@ -1074,12 +1184,15 @@ class ZiYuanShengChan(TaskPage):
 
     def run(self):
         self.locate('资源生产')
+
         self.click_text('收取')
 
         sign = self.confirm_loop('获得道具')
         if sign:
-            self.control.click_blank()
-            time.sleep(1)
+            self.confirm_click_change(
+                pageName="资源生产",
+                func=self.control.click_blank
+            )
 
 
 @init_task
@@ -1280,7 +1393,7 @@ class ShiBingYanXi(TaskPage):
                             break
 
                 self.control.random_click(self.modelTextAttack.pos)
-                self.battle()
+                self.battle(typeBattle="yanxi")
                 self.wait_page("进攻选择")
 
         timesBattle = self.check_battletimes()
@@ -1307,7 +1420,10 @@ class ShiBingYanXi(TaskPage):
 
         sign = self.confirm_loop('获得道具')
         if sign:
-            self.control.click_blank()
+            self.confirm_click_change(
+                pageName="实兵演习",
+                func=self.control.click_blank
+            )
 
     def run(self):
         self.locate('实兵演习')
@@ -1323,6 +1439,100 @@ class ShiBingYanXi(TaskPage):
         self.reward()
 
 
+class BuJiZuoZhan(TaskPage):
+    taskName = "补给作战"
+
+    def __init__(self):
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('补给作战')
+
+
+@init_task
+class WeiTuo(TaskPage):
+    taskName = "委托"
+
+    def __init__(self):
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('委托')
+
+        sign = self.click_text("一键领取")
+        if not sign:
+            logger(f"{self.taskName} 无可领取订单")
+
+        sign = self.click_text("领取全部")
+        if sign:
+            self.wait_page("获得道具")
+            self.confirm_click_change(
+                pageName="委托",
+                func=self.control.click_blank
+            )
+            logger(f"{self.taskName} 奖励已收取")
+
+        else:
+            logger(f"{self.taskName} 无可领取奖励")
+
+
+@init_task
+class XiuXi(TaskPage):
+    taskName = "休息"
+
+    def __init__(self):
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('休息室')
+
+
+@init_task
+class MeiRiLiBao(TaskPage):
+    taskName = "每日礼包"
+
+    def __init__(self):
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate('新品上架')
+
+        self.click_text("品质甄选")
+        time.sleep(self.limitClickCD)
+
+        self.click_text("常驻礼包")
+        time.sleep(self.limitClickCD)
+
+        sign = self.click_text("免费")
+        if not sign:
+            return
+
+        time.sleep(self.limitClickCD)
+
+        self.click_text("确认")
+        self.wait_page("获得道具")
+        time.sleep(self.limitClickCD)
+
+        self.control.click_blank()
+
+
+class HuoDongKunNan(TaskPage):
+    taskName = "活动困难"
+    activityName = "远日点"
+
+    def __init__(self):
+        super().__init__(self.taskName)
+
+    def run(self):
+        self.locate(self.activityName)
+
+        self.click_text("远日点·上篇")
+        time.sleep(self.limitClickCD)
+
+        self.click_text("困难")
+        time.sleep(self.limitClickCD)
+
+
 if __name__ == "__main__":
-    page = ShiBingYanXi()
-    page.reward()
+    page = HuoDongKunNan()
+    page.run()
