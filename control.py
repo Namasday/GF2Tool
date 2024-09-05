@@ -12,9 +12,7 @@ class Control:
     def __init__(self, windowPosition):
         self.windowPosition = windowPosition
 
-    def click(self, x=0, y=0):
-        x = x if isinstance(x, int) else int(x)
-        y = y if isinstance(y, int) else int(y)
+    def click(self, x: int = 0, y: int = 0):
         x = x + self.windowPosition[0]
         y = y + self.windowPosition[1]
         win32api.SetCursorPos((x, y))
@@ -43,3 +41,44 @@ class Control:
             y2=Setting.screenHeight,
         )
         self.random_click(pos)
+
+    def mouse_reset(self, x: int = None, y: int = None):
+        x = int(Setting.screenWidth / 2) if not x else x
+        y = int(Setting.screenHeight / 2) if not y else y
+        x = x + self.windowPosition[0]
+        y = y + self.windowPosition[1]
+        win32api.SetCursorPos((x, y))
+
+    def mouse_clickdown(self, x: int = 0, y: int = 0):
+        x = x + self.windowPosition[0]
+        y = y + self.windowPosition[1]
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0)
+
+    def mouse_clickup(self, x: int = 0, y: int = 0):
+        x = x + self.windowPosition[0]
+        y = y + self.windowPosition[1]
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0)
+
+    def mouse_move(self, x: int = 0, y: int = 0, offset=(0, 0), duration: float = 0.01):
+        # 计算移动的总距离和步数
+        dx = offset[0]
+        dy = offset[1]
+        steps = max(abs(dx), abs(dy))
+        if steps == 0:
+            steps = 1  # 防止除以零
+
+        # 每一步移动的距离
+        step_dx = dx / steps
+        step_dy = dy / steps
+
+        self.mouse_reset(x, y)
+        self.mouse_clickdown(x, y)
+
+        for _ in range(int(steps)):
+            x = x + int(round(step_dx * (_ + 1)))
+            y = y + int(round(step_dy * (_ + 1)))
+            win32api.SetCursorPos((x + self.windowPosition[0], y + self.windowPosition[1]))
+            time.sleep(duration / steps)  # 简单的延时来模拟拖动速度
+
+        # 释放鼠标按钮
+        self.mouse_clickup(x + dx, y + dy)

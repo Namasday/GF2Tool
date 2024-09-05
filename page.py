@@ -69,6 +69,26 @@ listDictPages = [
     {
         "pageName": "远日点",
         "modelSpecialText": {"text": "当光明远离"},
+        "route": [
+            {
+                "pageName": "战役普通模式",
+                "modelDirectText": {"text": "远日点·上篇"}
+            }
+        ]
+    },
+    {
+        "pageName": "战役普通模式",
+        "modelSpecialText": {"text": "普通模式"},
+        "route": [
+            {
+                "pageName": "战役困难模式",
+                "modelDirectText": {"text": "困难"}
+            }
+        ]
+    },
+    {
+        "pageName": "战役困难模式",
+        "modelSpecialText": {"text": "困难模式"},
         "route": []
     },
 
@@ -1519,18 +1539,102 @@ class MeiRiLiBao(TaskPage):
 class HuoDongKunNan(TaskPage):
     taskName = "活动困难"
     activityName = "远日点"
+    battleName = "DF-9-5"
 
     def __init__(self):
         super().__init__(self.taskName)
 
+    def reco_battlepos(self):
+        """
+        识别活动战斗位置
+        :return:
+        """
+        img = self.screenshot()
+
+        # 截取战斗次数区域
+        region = (0, 0.47, 1, 0.51)
+        pos = PositionModel(
+            x1=int(Setting.screenWidth * region[0]),
+            y1=int(Setting.screenHeight * region[1]),
+            x2=int(Setting.screenWidth * region[2]),
+            y2=int(Setting.screenHeight * region[3])
+        )
+
+        listTextModel = ocr_crop(img, pos)
+        if not listTextModel:
+            return None
+
+        for modelText in listTextModel:
+            if textmatch_whole(self.battleName, modelText):
+                return modelText.pos
+
+        return None
+
+    def close(self):
+        """
+        关闭战役面板
+        """
+        self.control.click_blank()
+        time.sleep(self.limitClickCD)
+
+    def check_battletimes(self):
+        """
+        识别战斗次数
+        :return:
+        """
+        img = self.screenshot()
+
+        # 截取战斗次数区域
+        region = (0.95, 0.03, 0.97, 0.06)
+        pos = PositionModel(
+            x1=int(Setting.screenWidth * region[0]),
+            y1=int(Setting.screenHeight * region[1]),
+            x2=int(Setting.screenWidth * region[2]),
+            y2=int(Setting.screenHeight * region[3])
+        )
+
+        listTextModel = ocr_crop(img, pos)
+        return int(listTextModel[0].text)
+
     def run(self):
-        self.locate(self.activityName)
+        self.locate("战役困难模式")
 
-        self.click_text("远日点·上篇")
-        time.sleep(self.limitClickCD)
+        timesBattle = self.check_battletimes()
 
-        self.click_text("困难")
-        time.sleep(self.limitClickCD)
+        if timesBattle != 0:
+            # 鼠标向左拖动
+            x = int(Setting.screenWidth / 2)
+            y = int(Setting.screenHeight * 3 / 4)
+            self.control.mouse_move(
+                x, y,
+                offset=(-int(Setting.screenWidth / 40), 0)
+            )
+            time.sleep(1)  # 等待UI动画回弹
+
+            pos = self.reco_battlepos()
+            self.control.random_click(pos)
+            time.sleep(self.limitClickCD)
+
+            self.click_text("自律")
+            time.sleep(self.limitClickCD)
+
+            for _ in range(6):
+                self.click_image("活动+")
+                time.sleep(self.limitClickCD)
+
+            time.sleep(self.limitClickCD)
+
+            self.click_text("确认")
+
+            self.wait_page("获得道具")
+            self.confirm_click_change(
+                pageName="战役困难模式",
+                func=self.control.click_blank
+            )
+
+            self.close()
+
+        logger(f"{self.taskName} 已完成")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,8 @@ class Setting:
         "自动战斗": "template/autobattle.png",
         "关闭要务": "template/close_yaowu.png",
         "关闭进攻选择": "template/back_jingongxuanze.png",
-        "收获_演习": "template/reward_yanxi.png"
+        "收获_演习": "template/reward_yanxi.png",
+        "活动+": "template/activity+.png"
     }  # 模板图片指针
 
     # 读取预设文件
