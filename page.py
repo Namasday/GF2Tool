@@ -170,7 +170,7 @@ listDictPages = [
     # 班组分支
     {
         "pageName": "班组",
-        "modelSpecialText": {"text": "要务"},
+        "modelSpecialText": {"text": "成员"},
         "route": [
             {
                 "pageName": "班组要务",
@@ -272,7 +272,7 @@ listDictPages = [
     },
     {
         "pageName": "任务完成",
-        "modelSpecialText": {"text": "指挥官等级"},
+        "modelSpecialText": {"text": "等级"},
         "typeMatch": "part",
         "route": []
     },
@@ -628,6 +628,7 @@ class Page:
         self.scaleFactor = None  # 缩放系数
 
         self.__refresh_setting()  # 初始化设置
+
         self.control = Control(
             windowPosition=self.windowPosition
         )
@@ -1095,6 +1096,9 @@ class TaskPage(Page):
                 self.control.random_click(self.dictText[text])
                 return True
 
+            else:
+                return False
+
     def auto_battle(self):
         """
         自动战斗
@@ -1162,18 +1166,32 @@ class PaiQian(TaskPage):  # done
     def __init__(self):
         super().__init__(self.taskName)
 
+    def reward(self):
+        sign = self.click_image("收获_派遣")
+        if sign:
+            self.wait_page("获得道具")
+
+            self.confirm_click_change(
+                pageName="调度室",
+                func=self.control.click_blank
+            )
+
+            logger(f"{self.taskName} 周奖励已已领取")
+
     def run(self):
         self.locate('调度室')
         sign = self.click_text('一键领取')
-        if not sign:  # 未找到一键领取
-            logger("已完成或未到收获时间")
-            return
-
-        self.wait_page("派遣完成")
-        sign = self.click_text('再次派遣')
         if sign:
-            self.wait_page("调度室")
+            self.wait_page("派遣完成")
 
+            sign = self.click_text('再次派遣')
+            if sign:
+                self.wait_page("调度室")
+
+        self.reward()
+
+        self.retrun_to_mainPage()
+        self.wait_page("主界面")
 
 @init_task
 class QingBaoCuBei(TaskPage):  # done
@@ -1483,6 +1501,7 @@ class WeiTuo(TaskPage):
         if not sign:
             logger(f"{self.taskName} 无可领取订单")
 
+        time.sleep(1)  # 等待箱子动画
         sign = self.click_text("领取全部")
         if sign:
             self.wait_page("获得道具")
@@ -1536,6 +1555,7 @@ class MeiRiLiBao(TaskPage):
         self.control.click_blank()
 
 
+@init_task
 class HuoDongKunNan(TaskPage):
     taskName = "活动困难"
     activityName = "远日点"
@@ -1618,8 +1638,9 @@ class HuoDongKunNan(TaskPage):
             self.click_text("自律")
             time.sleep(self.limitClickCD)
 
-            for _ in range(6):
-                self.click_image("活动+")
+            model = self.reco_image("活动+")
+            for _ in range(timesBattle):
+                self.control.random_click(model.pos)
                 time.sleep(self.limitClickCD)
 
             time.sleep(self.limitClickCD)
@@ -1638,5 +1659,9 @@ class HuoDongKunNan(TaskPage):
 
 
 if __name__ == "__main__":
-    page = HuoDongKunNan()
-    page.run()
+    for cls in dictTaskCls.values():
+        page = cls()
+        page.run()
+
+    # page = PaiQian()
+    # page.run()
